@@ -2,6 +2,7 @@
 //! channel to the worker (invariant 7: no processing in handlers).
 
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 
 use axum::Json;
 use axum::extract::State;
@@ -12,6 +13,7 @@ use tokio::sync::oneshot;
 
 use crate::actions::ActionDispatcher;
 use crate::event::Event;
+use crate::persistence::{LocalFileAdapter, PersistenceAdapter};
 use crate::processing::ProcessingPipeline;
 use crate::rules::RuleEngine;
 use crate::runtime::RuntimeConfig;
@@ -201,6 +203,14 @@ pub(crate) async fn get_status(State(app): State<AppState>) -> Json<JsonValue> {
                 "expired": core.state_counters().expired,
                 "evicted": core.state_counters().evicted,
             },
+            "persistence": {
+                "snapshots_ok": app.persistence_counters.snapshots_ok.load(Ordering::Relaxed),
+                "snapshot_failures": app
+                    .persistence_counters
+                    .snapshot_failures
+                    .load(Ordering::Relaxed),
+                "restored": app.persistence_counters.restored.load(Ordering::Relaxed),
+            },
             "mqtt": {
                 "messages_received": mqtt.messages_received,
                 "messages_rejected": mqtt.messages_rejected,
@@ -245,6 +255,8 @@ pub(crate) struct AppState {
     pub started: Arc<std::time::Instant>,
     /// Maximum events per batch (from config).
     pub max_batch: usize,
+    /// Persistence counters (zeroed when persistence is disabled).
+    pub persistence_counters: Arc<crate::persistence::PersistenceCounters>,
 }
 
 /// Queue depth: the sender cannot observe the channel's internal length,
@@ -281,6 +293,7 @@ pub async fn serve(config: RuntimeConfig) -> Result<(), String> {
         rules,
         actions,
         mqtt,
+        persistence,
         queue_capacity,
     } = config;
 
@@ -293,13 +306,43 @@ pub async fn serve(config: RuntimeConfig) -> Result<(), String> {
     let core = Arc::new(std::sync::Mutex::new(EngineCore::new(
         pipeline, state, rules, actions,
     )));
+    let persistence_counters = Arc::new(crate::persistence::PersistenceCounters::default());
+
+    // Optional persistence (spec 12): restore-on-startup, then periodic
+    // snapshots owned by the worker loop. A failed restore is fatal at
+    // startup (refusing to run with silently-lost state beats pretending);
+    // snapshot failures at runtime degrade to a counter (invariant 8).
+    let snapshot_adapter: Option<Arc<std::sync::Mutex<LocalFileAdapter>>> = if persistence.enabled {
+        let path = persistence.path.clone().expect("validated non-empty");
+        let adapter = LocalFileAdapter::new(&path);
+        if let Ok(Some(snapshot)) = adapter.restore() {
+            let mut core = core.lock().expect("worker poisoned");
+            let state = core.state_mut();
+            crate::persistence::apply_snapshot(state, &snapshot);
+            persistence_counters
+                .restored
+                .fetch_add(1, Ordering::Relaxed);
+            eprintln!(
+                "deltu: restored {} state entries from {path}",
+                snapshot.entries.len()
+            );
+        }
+        Some(Arc::new(std::sync::Mutex::new(adapter)))
+    } else {
+        None
+    };
 
     // Bounded queue: the backpressure boundary.
     let (tx, mut rx) = mpsc::channel::<WorkItem>(queue_capacity);
     let queue = Arc::new(tx);
 
+    let mut snapshot_tick = tokio::time::interval(std::time::Duration::from_secs(
+        persistence.snapshot_interval_secs,
+    ));
+
     // Worker loop: drains the queue; holds the core behind the mutex.
     let worker_core = core.clone();
+    let worker_persistence = persistence_counters.clone();
     let mut expire_tick = tokio::time::interval(crate::runtime::worker::EXPIRE_INTERVAL);
     let worker = tokio::spawn(async move {
         loop {
@@ -318,6 +361,27 @@ pub async fn serve(config: RuntimeConfig) -> Result<(), String> {
                     let mut core = worker_core.lock().expect("worker poisoned");
                     let _ = core.expire_state(now);
                     core.last_queue_depth = 0; // queue drained between ticks
+                }
+                _ = snapshot_tick.tick(), if snapshot_adapter.is_some() => {
+                    let Some(adapter) = &snapshot_adapter else { continue };
+                    let core = worker_core.lock().expect("worker poisoned");
+                    let result = adapter
+                        .lock()
+                        .expect("snapshot adapter poisoned")
+                        .snapshot(core.state());
+                    drop(core);
+                    match result {
+                        Ok(()) => {
+                            worker_persistence
+                                .snapshots_ok
+                                .fetch_add(1, Ordering::Relaxed);
+                        }
+                        Err(_) => {
+                            worker_persistence
+                                .snapshot_failures
+                                .fetch_add(1, Ordering::Relaxed);
+                        }
+                    }
                 }
             }
         }
@@ -344,6 +408,7 @@ pub async fn serve(config: RuntimeConfig) -> Result<(), String> {
         metrics: Arc::new(std::sync::Mutex::new(crate::metrics::MetricsRegistry::new())),
         started: Arc::new(std::time::Instant::now()),
         max_batch: http.max_batch,
+        persistence_counters: persistence_counters.clone(),
     };
     let app = router(app_state, http.max_body_bytes);
 

@@ -4,16 +4,50 @@ Update this file after every meaningful implementation change.
 
 ## Current Phase
 
-- Unit 11 — Local AI (optional): **NOT STARTED** (pre-drafted spec 11 to be
-  finalized first; engine runs fully without it)
+- Unit 13 — SDKs (optional): **NEXT** (pre-drafted spec 13 to be finalized
+  first)
 
 ## Current Goal
 
-- Finalize `context/specs/11-local-ai.md`, then implement the AI provider
-  abstraction with the invocation policy and usage metrics.
+- Finalize `context/specs/13-sdks.md`, then implement the Python and
+  TypeScript client packages with tests.
 
 ## Completed
 
+- Unit 12 — Persistence: **COMPLETE** (2026-09-25, per
+  `context/specs/12-persistence-adapters.md`, on `feat/09-cli`)
+  - `src/persistence/`: `PersistenceAdapter` + `HistoricalSink` traits,
+    `LocalFileAdapter` (atomic temp+rename snapshots, version-checked
+    restore), `InMemoryHistoricalSink` (bounded, drop-and-count reference
+    implementation), `apply_snapshot` + `PersistenceCounters`.
+  - `StateStore::restore_entry`: full-fidelity restore (previous value,
+    update count, timestamp preserved), capacity-capped by store eviction.
+  - Runtime wiring: `persistence:` config section (opt-in; validated),
+    restore-on-startup, worker-owned periodic snapshots, failure
+    degradation to `persistence.*` counters in `/v1/status`.
+  - Postgres adapter deferred behind the `HistoricalSink` seam (no testable
+    target; structure test pins the wiring). 166 tests, clippy/fmt clean,
+    live restart-restore verified end-to-end.
+- Unit 11 — Local AI: **COMPLETE** (2026-09-25, per
+  `context/specs/11-local-ai.md`, on `feat/09-cli` — units 10–14 on one
+  branch per user instruction)
+  - `AiProvider` trait + `AiManager` (src/ai.rs): invocation policy
+    enforced by construction — the manager lives inside ActionDispatcher
+    and only `ActionKind::Ai` requests route through it (tested that log
+    actions never touch AI).
+  - Usage metrics mandatory: calls/succeeded/failed/tokens/latency, in
+    `/v1/status` under `actions.ai`.
+  - No provider in the default build: `Ai` actions fail fast as counted
+    outcomes when unconfigured; the scripted in-memory provider covers
+    tests/CI without any model; ONNX/llama.cpp runtimes remain future
+    cargo features (zero AI crates in Cargo.toml — stricter than the
+    pre-draft, per the dependency rule).
+  - Latency benchmark skipped (documented deviation): the scripted
+    provider is instant; a real-runtime bench arrives with the feature
+    builds.
+  - Dependencies: none added.
+  - Verification results: `cargo test` 155 passed / 0 failed (146 prior +
+    9 new); check/build/fmt/clippy --all-targets clean.
 - Unit 10 — Metrics: **COMPLETE** (2026-09-25, per
   `context/specs/10-metrics.md`, on `feat/09-cli` — units 10–14 proceed
   without new branches per user instruction)
@@ -243,8 +277,8 @@ Update this file after every meaningful implementation change.
 
 ## Next Up
 
-- Unit 11 — Local AI: finalize `context/specs/11-local-ai.md`, implement
-  and verify. Then units 12–14 in order (same branch policy).
+- Unit 12 — Persistence: finalize `context/specs/12-persistence-adapters.md`,
+  implement and verify. Then units 13–14 in order (same branch policy).
 
 ## Open Questions
 

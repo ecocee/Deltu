@@ -6,6 +6,7 @@ pub mod cli;
 pub mod event;
 pub mod input;
 pub mod metrics;
+pub mod persistence;
 pub mod processing;
 pub mod rules;
 pub mod runtime;

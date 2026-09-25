@@ -100,6 +100,41 @@ pub struct StateStore {
 }
 
 impl StateStore {
+    /// Loads one persisted entry with full fidelity (restore path for the
+    /// optional persistence adapter): previous value, update count, and
+    /// timestamp are preserved exactly as snapshotted. Respects
+    /// capacity/eviction like `observe`, so restoring can never violate
+    /// the bounded-state invariant.
+    pub fn restore_entry(&mut self, entry: StateEntry) {
+        if self.entries.contains_key(&entry.key) {
+            return; // duplicate keys in a snapshot: first wins
+        }
+        if self.entries.len() == self.capacity
+            && let Some(victim) = self
+                .entries
+                .iter()
+                .min_by(|(_, a), (_, b)| {
+                    a.entry
+                        .updated_at_ms
+                        .cmp(&b.entry.updated_at_ms)
+                        .then(a.inserted_seq.cmp(&b.inserted_seq))
+                })
+                .map(|(k, _)| k.clone())
+        {
+            self.entries.remove(&victim);
+            self.counters.evicted += 1;
+        }
+        let key = entry.key.clone();
+        self.entries.insert(
+            key,
+            Record {
+                entry,
+                inserted_seq: self.next_seq,
+            },
+        );
+        self.next_seq += 1;
+    }
+
     /// Validates the configuration and creates an empty store.
     pub fn new(config: StateConfig) -> Result<Self, StateError> {
         if config.max_entries == 0 {

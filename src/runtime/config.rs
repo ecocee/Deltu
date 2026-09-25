@@ -31,9 +31,43 @@ pub struct RuntimeConfig {
     /// MQTT adapter settings (disabled when `enabled` is false).
     #[serde(default)]
     pub mqtt: MqttSection,
+    /// Optional persistence (snapshots + historical sink). Disabled by
+    /// default: the engine runs identically with an absent section.
+    #[serde(default)]
+    pub persistence: PersistenceSection,
     /// Bounded work-queue depth between HTTP handlers and the worker.
     #[serde(default = "default_queue_capacity")]
     pub queue_capacity: usize,
+}
+
+/// Persistence section (spec 12): strictly opt-in; absent or `enabled:
+/// false` means no persistence code path runs at all.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PersistenceSection {
+    /// Enable the local snapshot adapter. Default false.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Snapshot file path. Required when enabled.
+    #[serde(default)]
+    pub path: Option<String>,
+    /// Snapshot cadence in seconds. Default 60.
+    #[serde(default = "default_snapshot_interval_secs")]
+    pub snapshot_interval_secs: u64,
+}
+
+fn default_snapshot_interval_secs() -> u64 {
+    60
+}
+
+impl Default for PersistenceSection {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            path: None,
+            snapshot_interval_secs: default_snapshot_interval_secs(),
+        }
+    }
 }
 
 /// MQTT section: `enabled` gates the adapter (an unconfigured MQTT
@@ -62,6 +96,7 @@ impl Default for RuntimeConfig {
             rules: Vec::new(),
             actions: Vec::new(),
             mqtt: MqttSection::default(),
+            persistence: PersistenceSection::default(),
             queue_capacity: default_queue_capacity(),
         }
     }
@@ -166,6 +201,22 @@ impl RuntimeConfig {
         if self.queue_capacity == 0 {
             return Err(ConfigError::Validation("queue_capacity must be > 0".into()));
         }
+        if self.persistence.enabled
+            && self
+                .persistence
+                .path
+                .as_deref()
+                .is_none_or(|p| p.trim().is_empty())
+        {
+            return Err(ConfigError::Validation(
+                "persistence.enabled requires a non-empty persistence.path".into(),
+            ));
+        }
+        if self.persistence.snapshot_interval_secs == 0 {
+            return Err(ConfigError::Validation(
+                "persistence.snapshot_interval_secs must be > 0".into(),
+            ));
+        }
 
         // Rule + action validation happens through the engines at build
         // time; here we validate referential integrity and id uniqueness.
@@ -212,6 +263,19 @@ impl RuntimeConfig {
         for (key, value) in vars {
             match key.as_str() {
                 "DELTU_HTTP_BIND" => self.http.bind = value.clone(),
+                "DELTU_SNAPSHOT_INTERVAL_SECS" => {
+                    let parsed: u64 = value.parse().map_err(|_| {
+                        ConfigError::Validation(format!(
+                            "DELTU_SNAPSHOT_INTERVAL_SECS must be a positive integer, got {value:?}"
+                        ))
+                    })?;
+                    if parsed == 0 {
+                        return Err(ConfigError::Validation(
+                            "DELTU_SNAPSHOT_INTERVAL_SECS must be > 0".into(),
+                        ));
+                    }
+                    self.persistence.snapshot_interval_secs = parsed;
+                }
                 "DELTU_QUEUE_CAPACITY" => {
                     let parsed: usize = value.parse().map_err(|_| {
                         ConfigError::Validation(format!(
@@ -245,5 +309,61 @@ impl RuntimeConfig {
             }
         }
         Ok(self.actions.clone())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn persistence_disabled_by_default_and_validated_when_enabled() {
+        let config = RuntimeConfig::default();
+        assert!(!config.persistence.enabled);
+        config.validate().unwrap(); // absent section: valid
+
+        let enabled_no_path = RuntimeConfig {
+            persistence: PersistenceSection {
+                enabled: true,
+                path: None,
+                snapshot_interval_secs: 60,
+            },
+            ..RuntimeConfig::default()
+        };
+        assert!(enabled_no_path.validate().is_err());
+
+        let enabled_zero_interval = RuntimeConfig {
+            persistence: PersistenceSection {
+                enabled: true,
+                path: Some("snapshots.json".into()),
+                snapshot_interval_secs: 0,
+            },
+            ..RuntimeConfig::default()
+        };
+        assert!(enabled_zero_interval.validate().is_err());
+
+        let valid = RuntimeConfig {
+            persistence: PersistenceSection {
+                enabled: true,
+                path: Some("snapshots.json".into()),
+                snapshot_interval_secs: 30,
+            },
+            ..RuntimeConfig::default()
+        };
+        valid.validate().unwrap();
+    }
+
+    #[test]
+    fn persistence_section_parses_from_yaml() {
+        let yaml =
+            "persistence:\n  enabled: true\n  path: /tmp/snap.json\n  snapshot_interval_secs: 15\n";
+        let config: RuntimeConfig = serde_yaml::from_str(yaml).unwrap();
+        assert!(config.persistence.enabled);
+        assert_eq!(config.persistence.path.as_deref(), Some("/tmp/snap.json"));
+        assert_eq!(config.persistence.snapshot_interval_secs, 15);
+
+        // Absent section: defaults (disabled).
+        let empty: RuntimeConfig = serde_yaml::from_str("{}\n").unwrap();
+        assert!(!empty.persistence.enabled);
     }
 }

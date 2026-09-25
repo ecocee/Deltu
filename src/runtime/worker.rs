@@ -163,6 +163,12 @@ impl EngineCore {
     pub fn state(&self) -> &StateStore {
         &self.state
     }
+
+    /// Access the state store mutably (restore path for the optional
+    /// persistence adapter; startup only).
+    pub fn state_mut(&mut self) -> &mut StateStore {
+        &mut self.state
+    }
 }
 
 /// Current wall-clock milliseconds since the Unix epoch. The only place

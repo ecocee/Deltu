@@ -44,6 +44,7 @@ fn test_state(
             metrics: Arc::new(Mutex::new(crate::metrics::MetricsRegistry::new())),
             started: Arc::new(Instant::now()),
             max_batch,
+            persistence_counters: Arc::new(crate::persistence::PersistenceCounters::default()),
         },
         rx,
     )

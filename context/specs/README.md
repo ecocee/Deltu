@@ -18,8 +18,8 @@ their unit on request and must be re-verified and finalized at unit start.
 | [08-mqtt.md](08-mqtt.md) | 08 — MQTT | COMPLETE |
 | [09-cli.md](09-cli.md) | 09 — CLI | COMPLETE |
 | [10-metrics.md](10-metrics.md) | 10 — Metrics | COMPLETE |
-| [11-local-ai.md](11-local-ai.md) | 11 — Local AI (optional) | PRE-DRAFTED |
-| [12-persistence-adapters.md](12-persistence-adapters.md) | 12 — Persistence adapters (optional) | PRE-DRAFTED |
+| [11-local-ai.md](11-local-ai.md) | 11 — Local AI (optional) | COMPLETE (boundary; runtimes feature-gated future) |
+| [12-persistence-adapters.md](12-persistence-adapters.md) | 12 — Persistence adapters (optional) | COMPLETE |
 | [13-sdks.md](13-sdks.md) | 13 — SDKs | PRE-DRAFTED |
 | [14-packaging-deployment.md](14-packaging-deployment.md) | 14 — Packaging & deployment | PRE-DRAFTED |
 
