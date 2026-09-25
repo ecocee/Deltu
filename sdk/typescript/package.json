@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "description": "TypeScript client for the Deltu event engine (public v1 API)",
   "license": "Apache-2.0",
+  "author": "ECOCEE",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

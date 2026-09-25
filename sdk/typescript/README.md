@@ -4,6 +4,11 @@ TypeScript client for the Deltu event engine's public HTTP API (v1).
 Zero runtime dependencies (built-in `fetch`); no processing logic (the
 engine is the only validator of record). Strict-mode TypeScript, no `any`.
 
+## License
+
+Apache-2.0 — Copyright 2026 ECOCEE. See the repository root
+[`LICENSE`](../../LICENSE) and [`NOTICE`](../../NOTICE).
+
 ## Install
 
 ```bash

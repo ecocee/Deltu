@@ -166,4 +166,13 @@ and macOS ARM64 binaries with checksums on `v*` tags.
 
 ## License
 
-Apache-2.0.
+Deltu is licensed under the **Apache License 2.0** — free for use,
+modification, distribution, and commercial use. See
+[LICENSE](LICENSE) for the full text and [NOTICE](NOTICE) for
+attribution.
+
+Contributions are welcome under Apache-2.0's standard terms; copyright
+in each contributor's code remains with that contributor — see
+[CONTRIBUTING.md](CONTRIBUTING.md) for the contributor and IP
+expectations. The DELTU name and logo are trademarks of ECOCEE, separate
+from the software license — see [TRADEMARKS.md](TRADEMARKS.md).

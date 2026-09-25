@@ -1,0 +1,14 @@
+Deltu
+Copyright 2026 ECOCEE
+
+This product includes software developed by ECOCEE.
+
+Deltu is licensed under the Apache License, Version 2.0 (LICENSE).
+Distributions must include a readable copy of this notice per
+License §4(d). The DELTU name and logo are not licensed under the
+Apache License — see TRADEMARKS.md.
+
+The Rust binary links third-party crates at build time; each is
+governed by its own license and is not part of this Work. The
+authoritative list with versions is generated from Cargo metadata
+(`cargo license` on Cargo.toml/Cargo.lock).

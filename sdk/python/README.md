@@ -4,6 +4,11 @@ Thin client for the Deltu event engine's public HTTP API (v1). Zero
 runtime dependencies beyond `httpx`; no processing logic (the engine is
 the only validator of record).
 
+## License
+
+Apache-2.0 — Copyright 2026 ECOCEE. See the repository root
+[`LICENSE`](../../LICENSE) and [`NOTICE`](../../NOTICE).
+
 ## Install
 
 ```bash
