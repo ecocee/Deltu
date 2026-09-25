@@ -4,17 +4,47 @@ Update this file after every meaningful implementation change.
 
 ## Current Phase
 
-- Unit 03 — Processing Core: **IN PROGRESS** (spec written, ready to implement)
+- Unit 04 — State Engine: **NOT STARTED** (spec to be written first)
 
 ## Current Goal
 
-- Implement `context/specs/03-processing-core.md`: the four reduction stages
-  (filter, deduplication, aggregation, change detection) plus their
-  composition, counters, and criterion benchmark — then verify the
-  complete checklist.
+- Write `context/specs/04-state-engine.md` (keyed current-state store with
+  bounded capacity and periodic expiration per `research/state.md`), then
+  implement and verify it.
 
 ## Completed
 
+- Unit 03 — Processing Core: **COMPLETE** (2026-09-25, per
+  `context/specs/03-processing-core.md`, branch `feat/03-processing-core`)
+  - Four synchronous, clock-free stages: `KindFilter` (exact-kind or
+    dotted-family matching, `None` = allow-all), `Deduplicator` (bounded id
+    cache, FIFO eviction), `WindowAggregator` (tumbling event-time windows
+    keyed by `(source, kind)`, close-on-advance, late events dropped and
+    counted, `max_open_windows` eviction, non-numeric passthrough),
+    `ChangeDetector` (deadband on window means, `min_delta` 0.0 = never
+    suppress, bounded FIFO-evicted state).
+  - `ProcessingPipeline` composition (`process: Event -> Vec<Output>`),
+    `PipelineConfig` with conservative defaults, `PipelineConfigError`,
+    `PipelineCounters` covering every drop/eviction class; crate-root
+    re-exports.
+  - Dependency added: `criterion` 0.8.2 as dev-dependency (spec-justified);
+    bench target registered explicitly (`benchmarks/processing.rs`,
+    `harness = false`) because Cargo autodiscovers only `benches/`.
+  - Verification results: `cargo check` clean; `cargo build` ok;
+    `cargo test` 61 passed / 0 failed (foundation + event-model tests still
+    green); `cargo run` → `deltu 0.1.0`; `cargo fmt --check` clean;
+    `cargo clippy --all-targets` 0 warnings; `cargo bench` ran all three
+    cases.
+  - Benchmark results (criterion 0.8.2, Apple M5, idle dev machine, bench
+    profile, 100 samples):
+    - `filter_and_dedup_passthrough` (500-event batch): 36.9 µs/batch
+      (~74 ns/event).
+    - `window_aggregation_boundary` (close + emit per iteration, 2 events):
+      126 ns/iteration (~63 ns/event).
+    - `full_pipeline_accumulate` (50-event batch, single window): 4.34 µs/
+      batch (~87 ns/event).
+    Numbers are the documented starting point for this hardware only; no
+    other performance claims are made.
 - Unit 00 — Planning, Research & Context: **COMPLETE** (2026-09-25)
   - Context knowledge base, research collection, decision records 001–004,
     and specs 00/01 reviewed and in use by the implemented Unit 01.
@@ -53,19 +83,13 @@ Update this file after every meaningful implementation change.
 
 ## In Progress
 
-- Unit 03 — Processing Core (started 2026-09-25)
-  - Spec complete: `context/specs/03-processing-core.md` — stage semantics
-    (kind filter, bounded dedup, tumbling event-time windows, deadband
-    change detection), bounded-state invariants, config/error model,
-    criterion benchmark requirement, scope guard (no state/rules/actions/
-    queues/IO).
-  - Implementation not started.
+- None.
 
 ## Next Up
 
-- After Unit 03: write `context/specs/04-state-engine.md` (keyed current-
-  state store with bounded capacity and expiration per
-  `research/state.md`).
+- Unit 04 — State Engine: write `context/specs/04-state-engine.md`
+  (keyed current-state store, bounded capacity, periodic expiration per
+  `research/state.md`), then implement and verify it.
 
 ## Open Questions
 
@@ -87,13 +111,14 @@ Update this file after every meaningful implementation change.
 
 ## Session Notes
 
-- Repository layout: `Cargo.toml` (package `deltu` 0.1.0, edition 2024,
-  no dependencies), `Cargo.lock`, `src/lib.rs`, `src/main.rs`, `target/`
-  (ignored), plus the original `context/` and `AGENT.md`.
+- Repository layout: `Cargo.toml` (package `deltu` 0.1.0, edition 2024;
+  deps: serde, serde_json; dev-dep: criterion), `Cargo.lock`, `src/`
+  (`lib.rs`, `main.rs`, `event/`, `processing/`), `benchmarks/processing.rs`,
+  `target/` (ignored), plus the original `context/` and `AGENT.md`.
 - Unit 01 was implemented strictly within spec scope: no dependencies, no
   async runtime (decision 004), no event-engine code. The next unit begins
   with its spec, per the workflow rules.
-- Git: `feat/01-rust-foundation` holds Units 00–01 (commits `2f06984`,
-  `277aac3`) and is synced to origin; Unit 02 lives on
-  `feat/02-event-model`. Direct pushes from the coding shell lack HTTPS
-  credentials; sync via the client or a credentialed environment.
+- Git: Units 00–01 on `feat/01-rust-foundation`; Units 02–03 on
+  `feat/02-event-model` and `feat/03-processing-core`. Direct pushes from
+  the coding shell lack HTTPS credentials; sync via the client or a
+  credentialed environment.

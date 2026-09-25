@@ -1,6 +1,6 @@
 # Spec 03 — Processing Core
 
-Status: DRAFT (ready to implement) · Depends on: Unit 02 (Event Model)
+Status: COMPLETE (implemented & verified 2026-09-25) · Depends on: Unit 02 (Event Model)
 
 ## Goal
 
@@ -217,6 +217,10 @@ regardless of input volume — this is the unit's core correctness property.
    group, three cases: filter+dedup pass-through, window aggregation over a
    boundary, full pipeline. Synthetic events, no I/O. Record the numbers and
    conditions in the progress tracker; no performance claims beyond them.
+   (Implementation note: the file lives at `benchmarks/processing.rs` per
+   the architecture's `benchmarks/` boundary and is registered explicitly
+   in `Cargo.toml` with `harness = false`, because Cargo autodiscovers
+   only the `benches/` directory.)
 
 ## Dependencies
 
