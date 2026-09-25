@@ -201,6 +201,7 @@ impl RuntimeConfig {
         if self.queue_capacity == 0 {
             return Err(ConfigError::Validation("queue_capacity must be > 0".into()));
         }
+        Self::validate_bind(&self.http.bind)?;
         if self.persistence.enabled
             && self
                 .persistence
@@ -254,6 +255,35 @@ impl RuntimeConfig {
             }
         }
 
+        Ok(())
+    }
+
+    /// Validates a bind address syntactically: `host:port` with a
+    /// non-empty host and a valid port. DNS resolution is deliberately
+    /// not attempted here — `check` must stay environment-independent;
+    /// an unresolvable *host* still fails at run time with an
+    /// actionable error.
+    fn validate_bind(bind: &str) -> Result<(), ConfigError> {
+        let Some((host, port)) = bind.rsplit_once(':') else {
+            return Err(ConfigError::Validation(format!(
+                "http.bind must be host:port, got {bind:?} (missing port)"
+            )));
+        };
+        if host.is_empty() {
+            return Err(ConfigError::Validation(format!(
+                "http.bind must be host:port, got {bind:?} (missing host)"
+            )));
+        }
+        let port: u16 = port.parse().map_err(|_| {
+            ConfigError::Validation(format!(
+                "http.bind has an invalid port in {bind:?} (expected 1-65535)"
+            ))
+        })?;
+        if port == 0 {
+            return Err(ConfigError::Validation(
+                "http.bind port 0 is not allowed; pick an explicit port".into(),
+            ));
+        }
         Ok(())
     }
 
@@ -351,6 +381,55 @@ mod tests {
             ..RuntimeConfig::default()
         };
         valid.validate().unwrap();
+    }
+
+    #[test]
+    fn bind_validation_rejects_bad_addresses() {
+        let base = RuntimeConfig::default();
+        base.validate().unwrap(); // default bind is valid
+
+        for bad in [
+            "bad-address-no-port", // no port
+            ":8080",               // no host
+            "127.0.0.1:0",         // port 0
+            "127.0.0.1:99999",     // out of range
+            "127.0.0.1:http",      // not numeric
+            "",                    // empty
+        ] {
+            let config = RuntimeConfig {
+                http: HttpConfig {
+                    bind: bad.to_string(),
+                    ..HttpConfig::default()
+                },
+                ..RuntimeConfig::default()
+            };
+            assert!(config.validate().is_err(), "expected rejection of {bad:?}");
+        }
+
+        for good in [
+            "127.0.0.1:8080",
+            "0.0.0.0:80",
+            "[::1]:9000",
+            "myhost.local:1",
+        ] {
+            let config = RuntimeConfig {
+                http: HttpConfig {
+                    bind: good.to_string(),
+                    ..HttpConfig::default()
+                },
+                ..RuntimeConfig::default()
+            };
+            assert!(config.validate().is_ok(), "expected acceptance of {good:?}");
+        }
+    }
+
+    #[test]
+    fn env_override_of_bind_is_validated() {
+        let mut config = RuntimeConfig::default();
+        config
+            .apply_env_overrides(&[("DELTU_HTTP_BIND".to_string(), "no-port-here".to_string())])
+            .unwrap(); // override applies
+        assert!(config.validate().is_err());
     }
 
     #[test]

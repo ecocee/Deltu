@@ -77,7 +77,15 @@ pub fn convert_message(topic: &str, payload: &[u8], now_ms: i64) -> ConversionOu
         }
     };
 
-    let event_payload = match &value {
+    // Documented contract: a JSON object carrying a `value` field converts
+    // to that field's payload (the same tagged shape the HTTP API accepts,
+    // so rules compare against the inner scalar — not the envelope object).
+    // Bare scalars convert directly; any other object is structured.
+    let inner: &JsonValue = match &value {
+        JsonValue::Object(object) if object.contains_key("value") => &object["value"],
+        other => other,
+    };
+    let event_payload = match inner {
         JsonValue::Number(number) => {
             let Some(numeric) = number.as_f64() else {
                 return ConversionOutcome::Rejected(
@@ -138,9 +146,9 @@ mod tests {
 
     #[test]
     fn json_object_payload_is_structured() {
-        // Per the documented contract: scalars (number/string/bool) map to
-        // the scalar payload kinds; a JSON *object* — including one with a
-        // `value` field — is a structured payload, not special-cased.
+        // Per the documented contract: an object with a `value` field
+        // converts to the field's payload (scalar → scalar payload);
+        // objects *without* `value` are structured payloads.
         let payload = br#"{"value": 21.5}"#;
         let outcome = convert_message("sensors/esp32-1/temp", payload, 1_000);
         match outcome {
@@ -148,6 +156,51 @@ mod tests {
                 assert_eq!(event.kind, "temp");
                 assert_eq!(event.source, "mqtt://sensors/esp32-1/temp");
                 assert_eq!(event.timestamp, 1_000);
+                assert_eq!(event.payload, Payload::Numeric { value: 21.5 });
+            }
+            other => panic!("expected event, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn tagged_object_converts_to_inner_value() {
+        // The HTTP API's tagged shape must convert identically over MQTT:
+        // rules compare against the inner scalar, not the envelope.
+        for (payload, expected) in [
+            (
+                br#"{"type":"text","value":"open"}"#.as_slice(),
+                Payload::Text {
+                    value: "open".to_string(),
+                },
+            ),
+            (
+                br#"{"type":"numeric","value":7}"#.as_slice(),
+                Payload::Numeric { value: 7.0 },
+            ),
+            (
+                br#"{"type":"boolean","value":true}"#.as_slice(),
+                Payload::Boolean { value: true },
+            ),
+        ] {
+            let outcome = convert_message("sensors/esp32-1/door.state", payload, 1_000);
+            match outcome {
+                ConversionOutcome::Event(event) => {
+                    assert_eq!(event.payload, expected, "payload {payload:?}");
+                }
+                other => panic!("expected event for {payload:?}, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn object_without_value_field_is_structured() {
+        let outcome = convert_message(
+            "sensors/esp32-1/meta",
+            br#"{"firmware":"1.2","uptime":90}"#,
+            1_000,
+        );
+        match outcome {
+            ConversionOutcome::Event(event) => {
                 assert!(matches!(event.payload, Payload::Json { .. }));
             }
             other => panic!("expected event, got {other:?}"),

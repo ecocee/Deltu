@@ -36,10 +36,13 @@ impl SharedMqttCounters {
 /// configured topics, and forwards validated events into the engine's
 /// bounded work queue.
 ///
-/// Reconnection is handled by rumqttc's eventloop with capped exponential
-/// backoff; every reconnection is counted. A closed engine queue (engine
-/// shutting down) drops the in-flight message, counts it, and ends the
-/// task — broker failures never propagate upward (invariant 8 pattern).
+/// Reconnection is handled by the adapter (rumqttc's eventloop retries
+/// immediately with no backoff): on connection errors the task sleeps with
+/// capped exponential backoff (100ms → 30s) before polling again, and the
+/// counter of reconnection attempts is observable via `/v1/status`. A
+/// closed engine queue (engine shutting down) drops the in-flight message,
+/// counts it, and ends the task — broker failures never propagate upward
+/// (invariant 8 pattern).
 ///
 /// Returns `Err` when the broker URL cannot be parsed (startup
 /// configuration error, not a runtime failure).
@@ -66,6 +69,11 @@ pub fn spawn(
     options.set_keep_alive(std::time::Duration::from_secs(config.keep_alive_secs));
 
     let (client, mut eventloop) = AsyncClient::new(options, engine_capacity);
+
+    // Adapter-owned reconnect backoff (see the loop below).
+    const RECONNECT_BASE_MS: u64 = 100;
+    const RECONNECT_MAX_MS: u64 = 30_000;
+    let mut backoff_ms = RECONNECT_BASE_MS;
 
     // Subscribe to every configured topic at the configured QoS.
     let subscriptions = config.topics.clone();
@@ -101,14 +109,19 @@ pub fn spawn(
                     }
                 }
                 Ok(BrokerEvent::Incoming(Packet::ConnAck(_))) => {
+                    // Connection established: reset the backoff sequence.
+                    backoff_ms = RECONNECT_BASE_MS;
                     counters.record(|c| c.reconnects += 1);
                 }
                 Ok(_) => {}
                 Err(_) => {
-                    // Connection errors: the eventloop reconnects with
-                    // backoff internally. Count and keep polling — a broker
-                    // failure never propagates upward.
+                    // Connection errors: rumqttc retries immediately, so
+                    // the adapter owns the backoff. Without this cap-free
+                    // loop an unreachable broker burns a CPU core (audit
+                    // finding: ~50k attempts/s against a refused port).
                     counters.record(|c| c.reconnects += 1);
+                    tokio::time::sleep(std::time::Duration::from_millis(backoff_ms)).await;
+                    backoff_ms = (backoff_ms * 2).min(RECONNECT_MAX_MS);
                 }
             }
         }

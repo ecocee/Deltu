@@ -388,6 +388,11 @@ pub async fn serve(config: RuntimeConfig) -> Result<(), String> {
     });
 
     // MQTT adapter (optional; failures never propagate — invariant 8).
+    // The handle is kept and aborted after the server stops: the adapter
+    // holds a queue-sender clone, so leaving it running would keep the
+    // worker's channel open forever and block graceful shutdown (audit
+    // finding: SIGTERM hang with mqtt.enabled=true).
+    let mut mqtt_handle: Option<tokio::task::JoinHandle<()>> = None;
     let mqtt_counters = Arc::new(crate::input::mqtt::SharedMqttCounters::new());
     if mqtt.enabled {
         let handle = crate::input::mqtt::spawn(
@@ -396,8 +401,7 @@ pub async fn serve(config: RuntimeConfig) -> Result<(), String> {
             (*queue).clone(),
             queue_capacity,
         )?;
-        // The adapter task runs for the process lifetime; detached here.
-        drop(handle);
+        mqtt_handle = Some(handle);
     }
 
     let app_state = AppState {
@@ -440,7 +444,11 @@ pub async fn serve(config: RuntimeConfig) -> Result<(), String> {
         .await
         .map_err(|error| format!("server error: {error}"))?;
 
-    // Drain: give the worker a moment to finish in-flight items, then stop.
+    // Drain: stop the MQTT adapter first (it holds a queue sender), then
+    // the worker sees the closed channel and exits; drop the core last.
+    if let Some(handle) = mqtt_handle {
+        handle.abort();
+    }
     drop(core);
     let _ = worker.await;
     Ok(())

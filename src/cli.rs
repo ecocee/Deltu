@@ -41,6 +41,53 @@ pub enum Command {
         #[arg(long, default_value = "http://127.0.0.1:8080")]
         url: String,
     },
+    /// Start the engine in the background (daemonized) and print the PID.
+    ///
+    /// A convenience wrapper for local use; production deployments should
+    /// run `deltu run` under a service supervisor (launchd/systemd) or in
+    /// a container. Logs go to `--log-file` (default /tmp/deltu.log).
+    Up {
+        /// Path to a YAML or JSON config file. Omit for defaults.
+        #[arg(long)]
+        config: Option<String>,
+        /// Where background logs are written.
+        #[arg(long, default_value = "/tmp/deltu.log")]
+        log_file: String,
+        /// Readiness wait in seconds (polls /health before returning).
+        #[arg(long, default_value = "5")]
+        wait_secs: u64,
+    },
+    /// Stop a background engine started with `deltu up` (SIGTERM, then
+    /// SIGKILL after a grace period).
+    Down {
+        /// PID file written by `deltu up`.
+        #[arg(long, default_value = "/tmp/deltu.pid")]
+        pid_file: String,
+        /// Seconds to wait for graceful exit before forcing.
+        #[arg(long, default_value = "5")]
+        timeout_secs: u64,
+    },
+    /// Print the last N lines of the background engine's log.
+    Logs {
+        /// Log file written by `deltu up`.
+        #[arg(long, default_value = "/tmp/deltu.log")]
+        file: String,
+        /// Number of lines to show.
+        #[arg(long, default_value = "50")]
+        lines: usize,
+        /// Follow the log (like tail -f) until interrupted.
+        #[arg(long, default_value_t = false)]
+        follow: bool,
+    },
+    /// Print the effective configuration (defaults + file + env overrides).
+    Config {
+        /// Path to a YAML or JSON config file. Omit for defaults.
+        #[arg(long)]
+        config: Option<String>,
+        /// Output format.
+        #[arg(long, default_value = "yaml", value_parser = ["yaml", "json"])]
+        format: String,
+    },
 }
 
 /// Exit code for a failed operation (validation/connection).
@@ -55,6 +102,21 @@ pub fn execute(command: Command) -> i32 {
         Command::Check { config } => check(&config),
         Command::Status { url } => status(&url),
         Command::Health { url } => health(&url),
+        Command::Up {
+            config,
+            log_file,
+            wait_secs,
+        } => up(config, &log_file, wait_secs),
+        Command::Down {
+            pid_file,
+            timeout_secs,
+        } => down(&pid_file, timeout_secs),
+        Command::Logs {
+            file,
+            lines,
+            follow,
+        } => logs(&file, lines, follow),
+        Command::Config { config, format } => config_command(config.as_deref(), &format),
     }
 }
 
@@ -132,6 +194,213 @@ fn health(url: &str) -> i32 {
         }
         Err(message) => {
             eprintln!("{message}");
+            EXIT_FAILURE
+        }
+    }
+}
+
+/// Default PID file for `deltu up`/`deltu down`.
+pub const DEFAULT_PID_FILE: &str = "/tmp/deltu.pid";
+
+fn up(config_path: Option<String>, log_file: &str, wait_secs: u64) -> i32 {
+    use std::process::{Command, Stdio};
+
+    // Validate before backgrounding so config errors stay in the
+    // foreground where the user can see them.
+    if let Err(code) = load_config(config_path.as_deref()) {
+        return code;
+    }
+
+    let binary = match std::env::current_exe() {
+        Ok(path) => path,
+        Err(error) => {
+            eprintln!("cannot locate the deltu binary: {error}");
+            return EXIT_FAILURE;
+        }
+    };
+    let log = match std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(log_file)
+    {
+        Ok(file) => file,
+        Err(error) => {
+            eprintln!("cannot open log file {log_file}: {error}");
+            return EXIT_FAILURE;
+        }
+    };
+    let pid_file = DEFAULT_PID_FILE;
+
+    // Already running? (stale pid files are detected and replaced)
+    if let Ok(pid_text) = std::fs::read_to_string(pid_file)
+        && let Ok(pid) = pid_text.trim().parse::<i32>()
+    {
+        let alive = Command::new("kill")
+            .arg("-0")
+            .arg(pid.to_string())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        if alive {
+            println!("deltu already running (pid {pid})");
+            return 0;
+        }
+    }
+
+    let mut args = vec!["run".to_string()];
+    if let Some(path) = &config_path {
+        args.push("--config".to_string());
+        args.push(path.clone());
+    }
+    let child = match Command::new(&binary)
+        .args(&args)
+        .stdout(Stdio::from(log.try_clone().expect("log clone")))
+        .stderr(Stdio::from(log))
+        .stdin(Stdio::null())
+        .spawn()
+    {
+        Ok(child) => child,
+        Err(error) => {
+            eprintln!("failed to start engine: {error}");
+            return EXIT_FAILURE;
+        }
+    };
+    let pid = child.id();
+    std::fs::write(pid_file, pid.to_string()).ok();
+
+    // Readiness poll: /health must answer before we claim success.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(wait_secs);
+    let base = default_base_url(config_path.as_deref());
+    while std::time::Instant::now() < deadline {
+        if let Ok(body) = get_json(&base, "/health")
+            && body.get("status").and_then(|v| v.as_str()) == Some("ok")
+        {
+            println!("started (pid {pid}); logs: {log_file}");
+            return 0;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    println!("started (pid {pid}); health not confirmed within {wait_secs}s; logs: {log_file}");
+    0
+}
+
+/// Best-effort base URL for the readiness poll: the configured bind when
+/// parseable, else the documented default.
+fn default_base_url(config_path: Option<&str>) -> String {
+    if let Some(path) = config_path
+        && let Ok(config) = crate::RuntimeConfig::from_file(path)
+    {
+        return format!("http://{}", config.http.bind);
+    }
+    "http://127.0.0.1:8080".to_string()
+}
+
+fn down(pid_file: &str, timeout_secs: u64) -> i32 {
+    use std::process::{Command, Stdio};
+
+    let pid_text = match std::fs::read_to_string(pid_file) {
+        Ok(text) => text,
+        Err(_) => {
+            eprintln!("no pid file at {pid_file}; is deltu running via 'deltu up'?");
+            return EXIT_FAILURE;
+        }
+    };
+    let Ok(pid) = pid_text.trim().parse::<i32>() else {
+        eprintln!("corrupt pid file {pid_file}; remove it and stop the process manually");
+        return EXIT_FAILURE;
+    };
+    let signal_arg = |sig: &str| format!("-{sig}");
+    let _ = Command::new("kill")
+        .arg(signal_arg("TERM"))
+        .arg(pid.to_string())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
+    while std::time::Instant::now() < deadline {
+        let alive = Command::new("kill")
+            .arg("-0")
+            .arg(pid.to_string())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(true);
+        if !alive {
+            let _ = std::fs::remove_file(pid_file);
+            println!("stopped (pid {pid})");
+            return 0;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    let _ = Command::new("kill")
+        .arg(signal_arg("KILL"))
+        .arg(pid.to_string())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+    let _ = std::fs::remove_file(pid_file);
+    println!("forced stop (pid {pid}) after {timeout_secs}s");
+    0
+}
+
+fn logs(file: &str, lines: usize, follow: bool) -> i32 {
+    use std::process::{Command, Stdio};
+
+    if !std::path::Path::new(file).exists() {
+        eprintln!("no log file at {file}; start with 'deltu up' first");
+        return EXIT_FAILURE;
+    }
+    if follow {
+        let status = Command::new("tail")
+            .args([
+                "-f".to_string(),
+                "-n".to_string(),
+                lines.to_string(),
+                file.to_string(),
+            ])
+            .status();
+        return match status {
+            Ok(s) if s.success() => 0,
+            _ => EXIT_FAILURE,
+        };
+    }
+    match Command::new("tail")
+        .args(["-n", &lines.to_string(), file])
+        .stderr(Stdio::null())
+        .status()
+    {
+        Ok(s) if s.success() => 0,
+        _ => {
+            eprintln!("failed to read log file {file}");
+            EXIT_FAILURE
+        }
+    }
+}
+
+fn config_command(config_path: Option<&str>, format: &str) -> i32 {
+    let config = match load_config(config_path) {
+        Ok(config) => config,
+        Err(code) => return code,
+    };
+    if let Err(error) = config.validate() {
+        eprintln!("{error}");
+        return EXIT_FAILURE;
+    }
+    let output: Result<String, String> = if format == "json" {
+        serde_json::to_string_pretty(&config).map_err(|e| e.to_string())
+    } else {
+        serde_yaml::to_string(&config).map_err(|e| e.to_string())
+    };
+    match output {
+        Ok(text) => {
+            println!("{text}");
+            0
+        }
+        Err(error) => {
+            eprintln!("failed to serialize config: {error}");
             EXIT_FAILURE
         }
     }

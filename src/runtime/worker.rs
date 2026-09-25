@@ -235,6 +235,96 @@ mod tests {
     }
 
     #[test]
+    fn numeric_event_hot_rule_fires_via_summary_trigger() {
+        // The audit's live case: temperature readings above a threshold
+        // must fire the rule when the window summary is produced. A tiny
+        // window (2 ms event-time) closes the summary after each event.
+        let pipeline = ProcessingPipeline::new(PipelineConfig {
+            window_ms: 2,
+            ..PipelineConfig::default()
+        })
+        .unwrap();
+        let state = StateStore::new(StateConfig::default()).unwrap();
+        let rules = RuleEngine::new(vec![Rule {
+            id: "hot".to_string(),
+            description: None,
+            on: Trigger::Event {
+                kind: "temperature".to_string(),
+            },
+            condition: Condition::Comparison {
+                field: Field::EventValue,
+                op: Operator::Gt,
+                value: Literal::Numeric(80.0),
+            },
+            action: "log-ops".to_string(),
+            suppression: None,
+        }])
+        .unwrap();
+        let actions = ActionDispatcher::new(vec![ActionDefinition {
+            id: "log-ops".to_string(),
+            kind: ActionKind::Log {
+                level: LogLevel::Info,
+                template: None,
+            },
+        }])
+        .unwrap();
+        let mut core = EngineCore::new(pipeline, state, rules, actions);
+
+        let events = vec![
+            numeric_event("e1", 1_000, 95.0),
+            numeric_event("e2", 2_000, 21.0),
+        ];
+        let outcome = core.process_batch(events, 3_000);
+        assert_eq!(outcome.accepted, vec![true, true]);
+        // e2 lands in a new window, closing e1's window: the summary mean
+        // (95.0) fires the rule. e2's trailing window stays open (no later
+        // event yet), so exactly one action fires.
+        assert_eq!(outcome.action_outcomes.len(), 1);
+    }
+
+    #[test]
+    fn summary_mean_above_threshold_fires_action() {
+        let pipeline = ProcessingPipeline::new(PipelineConfig {
+            window_ms: 2,
+            ..PipelineConfig::default()
+        })
+        .unwrap();
+        let state = StateStore::new(StateConfig::default()).unwrap();
+        let rules = RuleEngine::new(vec![Rule {
+            id: "hot".to_string(),
+            description: None,
+            on: Trigger::Event {
+                kind: "temperature".to_string(),
+            },
+            condition: Condition::Comparison {
+                field: Field::EventValue,
+                op: Operator::Gt,
+                value: Literal::Numeric(80.0),
+            },
+            action: "log-ops".to_string(),
+            suppression: None,
+        }])
+        .unwrap();
+        let actions = ActionDispatcher::new(vec![ActionDefinition {
+            id: "log-ops".to_string(),
+            kind: ActionKind::Log {
+                level: LogLevel::Info,
+                template: None,
+            },
+        }])
+        .unwrap();
+        let mut core = EngineCore::new(pipeline, state, rules, actions);
+
+        let events = vec![
+            numeric_event("e1", 1_000, 95.0),
+            numeric_event("e2", 2_000, 90.0),
+        ];
+        let outcome = core.process_batch(events, 3_000);
+        assert_eq!(outcome.action_outcomes.len(), 1);
+        assert!(outcome.action_outcomes[0].result.is_ok());
+    }
+
+    #[test]
     fn batch_processes_and_fires_rule_end_to_end() {
         let mut core = engine_with_hot_rule();
         // The hot rule triggers on the temperature family and reads the
