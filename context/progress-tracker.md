@@ -4,13 +4,14 @@ Update this file after every meaningful implementation change.
 
 ## Current Phase
 
-- Unit 04 — State Engine: **NOT STARTED** (spec to be written first)
+- Unit 04 — State Engine: **IN PROGRESS** (spec written, ready to implement)
 
 ## Current Goal
 
-- Write `context/specs/04-state-engine.md` (keyed current-state store with
-  bounded capacity and periodic expiration per `research/state.md`), then
-  implement and verify it.
+- Implement `context/specs/04-state-engine.md`: the keyed, bounded,
+  expiring current-state store (`StateStore`) with its observe write path,
+  narrow read interface, periodic expiration, and criterion benchmark —
+  then verify the complete checklist.
 
 ## Completed
 
@@ -83,13 +84,19 @@ Update this file after every meaningful implementation change.
 
 ## In Progress
 
-- None.
+- Unit 04 — State Engine (started 2026-09-25)
+  - Spec complete: `context/specs/04-state-engine.md` — `StateKey` =
+    `(source, kind)`, `StateValue` mirror of `Payload` (no serde),
+    observe-based write path from pipeline outputs, sorted deterministic
+    reads, injected-clock periodic expiration returning evicted entries,
+    LRU-by-last-update capacity bounding, conservative defaults
+    (10k entries / 5-min expiry), zero new dependencies.
+  - Implementation not started.
 
 ## Next Up
 
-- Unit 04 — State Engine: write `context/specs/04-state-engine.md`
-  (keyed current-state store, bounded capacity, periodic expiration per
-  `research/state.md`), then implement and verify it.
+- After Unit 04: write `context/specs/05-rules.md` (deterministic typed
+  condition evaluation over events and state per `research/rules.md`).
 
 ## Open Questions
 
