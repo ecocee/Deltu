@@ -8,6 +8,7 @@
 
 pub mod error;
 pub mod log_action;
+pub mod webhook;
 
 use std::time::Instant;
 
@@ -15,6 +16,7 @@ use serde::{Deserialize, Serialize};
 
 pub use error::{ActionConfigError, ActionError};
 pub use log_action::LogLevel;
+pub use webhook::{WebhookConfig, WebhookExecutor, WebhookHeader, WebhookMethod};
 
 use crate::rules::ActionRequest;
 
@@ -57,6 +59,14 @@ pub enum ActionKind {
     },
     /// Sends the rule snapshot to the configured AI provider.
     Ai,
+    /// Delivers the rule snapshot as JSON to a configured HTTP endpoint
+    /// (spec 06's network transport; one bounded synchronous request, no
+    /// retries — failures become counted outcomes, invariant 8).
+    Webhook {
+        /// Endpoint configuration (URL, method, headers, timeout).
+        #[serde(flatten)]
+        webhook: crate::actions::webhook::WebhookConfig,
+    },
 }
 
 /// A configured action: its id plus its behavior.
@@ -146,6 +156,13 @@ impl ActionDispatcher {
                 // time (spec 11 policy: the manager is the only provider
                 // path).
                 ActionKind::Ai => Box::new(AiExecutor),
+                ActionKind::Webhook { webhook } => {
+                    // Configuration errors surface here, at build time —
+                    // never as runtime surprises.
+                    let executor = crate::actions::webhook::WebhookExecutor::new(webhook)
+                        .map_err(|reason| ActionConfigError::InvalidWebhook { reason })?;
+                    Box::new(executor)
+                }
             };
             executors.push((id, executor));
         }
@@ -306,6 +323,121 @@ mod tests {
     }
 
     // --- Dispatcher behavior ---
+
+    #[test]
+    fn webhook_config_errors_surface_at_construction_not_runtime() {
+        let definitions = vec![ActionDefinition {
+            id: "hook".to_string(),
+            kind: ActionKind::Webhook {
+                webhook: WebhookConfig {
+                    url: "not a url".to_string(),
+                    method: WebhookMethod::Post,
+                    headers: vec![],
+                    timeout_ms: 1_000,
+                },
+            },
+        }];
+        match ActionDispatcher::new(definitions) {
+            Err(ActionConfigError::InvalidWebhook { reason }) => {
+                assert!(reason.contains("valid URL"), "reason: {reason}");
+            }
+            other => panic!("expected InvalidWebhook, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn webhook_failures_are_counted_and_engine_continues() {
+        // A webhook to a port where nothing listens: dispatch returns an
+        // honest failed outcome and later dispatches still run (invariant
+        // 8 end-to-end through the real executor).
+        let mut dispatcher = ActionDispatcher::new(vec![ActionDefinition {
+            id: "hook".to_string(),
+            kind: ActionKind::Webhook {
+                webhook: WebhookConfig {
+                    url: "http://127.0.0.1:1/hook".to_string(),
+                    method: WebhookMethod::Post,
+                    headers: vec![],
+                    timeout_ms: 500,
+                },
+            },
+        }])
+        .unwrap();
+
+        let first = dispatcher.dispatch(&[request("r1", "hook")], 1_000);
+        assert_eq!(first.len(), 1);
+        assert!(first[0].result.is_err());
+        assert_eq!(dispatcher.counters().actions_attempted, 1);
+        assert_eq!(dispatcher.counters().actions_failed, 1);
+
+        // The engine continues: the next dispatch runs and is counted.
+        let second = dispatcher.dispatch(&[request("r2", "hook")], 2_000);
+        assert!(second[0].result.is_err());
+        assert_eq!(dispatcher.counters().actions_attempted, 2);
+        assert_eq!(dispatcher.counters().actions_failed, 2);
+    }
+
+    #[test]
+    fn webhook_success_through_the_dispatcher() {
+        // Local one-shot receiver asserting the dispatcher → executor
+        // → JSON body chain end-to-end (dispatcher level e2e).
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = format!("http://{}", listener.local_addr().unwrap());
+        let receiver = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut buffer = Vec::new();
+            let mut chunk = [0u8; 1024];
+            loop {
+                match stream.read(&mut chunk) {
+                    Ok(0) => break,
+                    Ok(n) => {
+                        buffer.extend_from_slice(&chunk[..n]);
+                        let text = String::from_utf8_lossy(&buffer).to_string();
+                        let headers_end = text.find("\r\n\r\n");
+                        let content_length = text.lines().find_map(|l| {
+                            l.to_lowercase()
+                                .strip_prefix("content-length:")
+                                .and_then(|v| v.trim().parse::<usize>().ok())
+                        });
+                        if let (Some(i), Some(len)) = (headers_end, content_length)
+                            && buffer.len() >= i + 4 + len
+                        {
+                            break;
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+            let raw = String::from_utf8_lossy(&buffer).to_string();
+            let body = raw[raw.find("\r\n\r\n").map(|i| i + 4).unwrap_or(0)..].to_string();
+            let _ = stream
+                .write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 0\r\nconnection: close\r\n\r\n");
+            body
+        });
+
+        let mut dispatcher = ActionDispatcher::new(vec![ActionDefinition {
+            id: "hook".to_string(),
+            kind: ActionKind::Webhook {
+                webhook: WebhookConfig {
+                    url: address,
+                    method: WebhookMethod::Post,
+                    headers: vec![],
+                    timeout_ms: 1_000,
+                },
+            },
+        }])
+        .unwrap();
+        let outcomes = dispatcher.dispatch(&[request("hot-room", "hook")], 5_000);
+        assert!(outcomes[0].result.is_ok(), "{outcomes:?}");
+        assert_eq!(dispatcher.counters().actions_succeeded, 1);
+
+        let body = receiver.join().unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(parsed["rule_id"], "hot-room");
+        assert_eq!(parsed["action"], "hook");
+        assert_eq!(parsed["payload"]["mean"], 85.0);
+    }
 
     #[test]
     fn log_action_execution_succeeds_with_rendered_line() {

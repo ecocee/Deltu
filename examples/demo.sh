@@ -24,11 +24,25 @@ rules:
       value: !Text
         open
     action: demo-log
+  - id: door-webhook
+    on: !Event
+      kind: door
+    condition: !Comparison
+      field: !EventValue
+      op: Eq
+      value: !Text
+        open
+    action: demo-webhook
 actions:
   - id: demo-log
     kind:
       type: log
       level: info
+  - id: demo-webhook
+    kind:
+      type: webhook
+      url: http://127.0.0.1:${PORT}/hooks/demo
+      timeout_ms: 1000
 EOF
 
 cleanup() { kill "${ENGINE_PID:-0}" 2>/dev/null || true; rm -f "$CONFIG"; }
@@ -54,5 +68,7 @@ curl -fsS -X POST "$BASE/v1/events" -H 'content-type: application/json' -d "{
 echo "== status =="
 curl -fsS "$BASE/v1/status" | python3 -m json.tool
 
-echo "== expected: accepted [true,true,true]; actions_fired 1 (rule 'door-open-log' on d-1);"
-echo "   state.entries 1 (door.state open→closed share one key; numeric accumulates, no entry yet) =="
+echo "== expected: accepted [true,true,true]; actions_fired 2 (log rule + webhook rule on d-1);"
+echo "   the webhook action fails (no receiver on the engine's own port) and is counted —"
+echo "   proving failure isolation; state.entries 1 (door.state open→closed share one key;"
+echo "   numeric accumulates, no entry yet) =="

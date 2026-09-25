@@ -1,4 +1,4 @@
-# Deltu Final Audit (2026-09-26)
+# Deltu Final Audit (2026-09-26; v0.1.0 readiness update at the bottom)
 
 Full-repository audit performed on `feat/15-readme` (containing the
 complete 14-unit build plan). Method: read the intended product from
@@ -11,7 +11,7 @@ new-developer path.
 ## Final status
 
 ```text
-DELTU STATUS
+DELTU STATUS (updated for v0.1.0 readiness, 2026-09-26)
 
 Build:            PASS        (cargo check/test/fmt/clippy all clean)
 Tests:            PASS        (170 lib tests + 24 SDK tests, 0 failures)
@@ -21,7 +21,7 @@ HTTP:             READY       (e2e verified; envelopes; backpressure; oversize)
 MQTT:             READY       (e2e with real broker, after 3 audit fixes)
 Rules:            READY       (event+state triggers, typed operators, suppression)
 State:            READY       (bounded, expiring, snapshot restore verified)
-Actions:          READY*      (log + AI actions isolated; *webhook missing)
+Actions:          READY       (log + webhook + AI actions, isolated; webhook e2e-verified)
 SDKs:             READY       (12/12 tests each incl. live engine)
 Documentation:    READY       (matches implementation after audit sync)
 Open Source:      READY       (LICENSE/NOTICE/CONTRIBUTING/TRADEMARKS/COC/SECURITY)
@@ -108,8 +108,59 @@ accepted as documented limitations).
 
 ## Pre-release checklist (recommended order)
 
-1. Dry-run `release.yml` on a `v0.1.0-rc1` tag; fix first-run issues.
-2. Ship the webhook output action (small, high demo value) — or adjust
-   the criterion-25 narrative to the log action.
-3. Decide the auth story for exposed deployments (proxy guidance exists).
-4. Physical test on a Raspberry Pi (ARM64 artifact).
+1. ~~Dry-run `release.yml` on a `v0.1.0-rc1` tag~~ — still the one
+   remaining step: GitHub Actions cannot run from this environment, so
+   the workflow itself is unexercised. Everything it builds has been
+   verified locally (see below).
+2. ~~Ship the webhook output action~~ — **DONE (v0.1.0)**.
+3. ~~Decide the auth story for exposed deployments~~ — documented as a
+   deployment boundary (`docs/deploy.md` §Security boundary,
+   `SECURITY.md`); no auth added to the MVP core, by design.
+4. Physical test on a Raspberry Pi (ARM64 artifact) — not possible
+   here; the aarch64 codegen was verified by running the ARM64 macOS
+   binary end-to-end on Apple Silicon (same instruction set, 6.5 MB,
+   full e2e).
+
+## v0.1.0 release-readiness update (2026-09-26, second pass)
+
+**Webhook action (the last MVP functional gap) — implemented and
+verified.** `ActionKind::Webhook` with `WebhookConfig` (url, method
+POST/PUT/PATCH, up to 16 headers, timeout_ms 1..=30000, default 3000):
+one bounded synchronous request per firing, no retries, no buffering;
+config errors fail at `deltu check`/startup
+(`ActionConfigError::InvalidWebhook`); network failures (connect /
+timeout / non-2xx) become counted `ActionError::ExecutionFailed`
+outcomes. Ten new tests; live e2e: rule fired → receiver asserted the
+JSON body (`rule_id`, `payload`, `ts_ms`) and the custom header;
+dead-receiver run → `actions.failed: 1`, engine healthy and still
+processing.
+
+**Runtime discovery during verification (fixed):** reqwest's blocking
+client panics when its client handle is built or used inside a tokio
+worker (nested-runtime drop). The worker now splits each batch:
+pipeline → state → rules stay on the async worker (pure, fast), and
+action dispatch runs on the blocking pool via `spawn_blocking`
+(`process_pipeline_and_state` + `dispatch_pending` on `EngineCore`).
+Client is a process-wide `OnceLock` handle built on a plain thread —
+one internal runtime, capped pool, per-request timeouts.
+
+**ARM64 verification:** `cargo build --release --target
+aarch64-apple-darwin` compiles clean (no arch-specific code
+anywhere in the tree); the stripped 6.5 MB ARM64 binary was executed
+end-to-end on Apple Silicon — `--version`, `check`, `run`, `health`,
+HTTP ingest landing in state, RSS ≈ 8.7 MB, 0.0% idle CPU, graceful
+SIGTERM. Linux ARM64 (`cross`) uses the identical pure-Rust dependency
+set; actual Linux/Pi execution remains a GitHub-workflow or device
+test.
+
+**Regression check after all changes:** 182 Rust tests pass (was 170;
++12 from this pass), clippy 0, fmt clean, release build clean, both
+SDK suites pass (12/12 each incl. live engine), MQTT e2e against a
+real broker re-verified (publish → state → rule → log action), demo
+script now shows `actions_fired: 2` (log + webhook, the webhook
+failing harmlessly against a dead URL, proving isolation), `deltu
+up/down/logs/config` lifecycle re-verified.
+
+**Release statement:** DELTU v0.1.0 is an open-source MVP suitable for
+developers to build and self-host continuous event-processing
+pipelines locally or at the edge.

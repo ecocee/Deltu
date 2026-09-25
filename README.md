@@ -78,7 +78,7 @@ boundary — overload answers `429 queue_full`, handlers never process.
 | `src/processing` | Filter, dedup, aggregation, change detection (spec 03) |
 | `src/state` | Keyed current-state store, bounded, expiring (spec 04) |
 | `src/rules` | Event/state-triggered rules, suppression windows (spec 05) |
-| `src/actions` | Dispatcher with pluggable executors (spec 06) |
+| `src/actions` | Log + webhook actions, pluggable executors (spec 06) |
 | `src/runtime` | Config, HTTP API, worker, graceful shutdown (spec 07) |
 | `src/input/mqtt` | MQTT adapter: reconnect/backoff, bounded buffering (spec 08) |
 | `src/cli` | `run` / `check` / `status` / `health` (spec 09) |
@@ -86,6 +86,24 @@ boundary — overload answers `429 queue_full`, handlers never process.
 | `src/ai` | Provider trait, policy, usage counters — optional (spec 11) |
 | `src/persistence` | Atomic snapshots, historical-sink contract — optional (spec 12) |
 | `sdk/python`, `sdk/typescript` | Thin clients over the public v1 API (spec 13) |
+
+## Actions
+
+Two action kinds ship today — both failure-isolated (a broken receiver
+never stops the engine; failures are counted in `/v1/status`):
+
+- **`log`** — structured JSON line on stderr.
+- **`webhook`** — one bounded JSON POST/PUT/PATCH to your endpoint
+  (configurable URL, headers, timeout; no retries):
+
+```yaml
+actions:
+  - id: notify
+    kind:
+      type: webhook
+      url: https://example.com/hooks/deltu
+      timeout_ms: 3000
+```
 
 ## HTTP API (v1)
 

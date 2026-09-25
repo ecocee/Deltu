@@ -1,6 +1,6 @@
 # Spec 06 — Actions
 
-Status: COMPLETE (implemented & verified 2026-09-25; finalized semantics below) · Depends on: Unit 05 (Rules)
+Status: COMPLETE (implemented & verified 2026-09-25; webhook transport landed 2026-09-26) · Depends on: Unit 05 (Rules)
 
 ## Goal
 
@@ -98,6 +98,15 @@ The pre-draft left four points open; resolved here before implementation:
    test requires a "deliberately-failing test action", which is only
    possible with a pluggable executor — and Units 07/08 add webhook/MQTT
    executors behind the same seam without changing dispatch semantics.
+   **(Webhook landed 2026-09-26 behind this exact seam: `ActionKind::Webhook`
+   with `WebhookConfig` — url, method POST/PUT/PATCH, up to 16 headers,
+   timeout_ms 1..=30000 default 3000. One bounded synchronous request per
+   firing, no retries, no buffering; config errors surface at
+   construction via `ActionConfigError::InvalidWebhook`; network failures
+   (connect/timeout/non-2xx) become counted `ActionError::ExecutionFailed`
+   outcomes. Verified with 10 tests incl. a local one-shot HTTP receiver
+   asserting method, headers, and JSON body
+   (`{rule_id, action, payload, ts_ms}`).)
 2. **Signature refinement:** `dispatch(requests, now_ms)` — the pre-draft
    required caller-injected timestamps (clock-free) but omitted the
    parameter. `elapsed_ms` inside outcomes uses a monotonic `Instant`:

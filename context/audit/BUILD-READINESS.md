@@ -1,4 +1,4 @@
-# Deltu Build & Developer Readiness (Audit 2026-09-26)
+# Deltu Build & Developer Readiness (Audit 2026-09-26; updated for v0.1.0 release readiness)
 
 ## Verdict
 
@@ -6,14 +6,31 @@
 Deltu today.** The full check battery passes, the release binary works
 end-to-end, the CLI lifecycle (`up/status/logs/down`) works, and both
 e2e input paths (HTTP and MQTT, verified against a real broker) drive
-events through pipeline → state → rules → actions.
+events through pipeline → state → rules → actions — including the
+**webhook output action** added for v0.1.0 and verified against a live
+HTTP receiver.
+
+## v0.1.0 release-readiness additions (2026-09-26)
+
+* Webhook action implemented behind the existing executor seam; live
+  e2e: rule fired → JSON delivered to a real receiver with configured
+  headers; dead receiver → counted failure, engine healthy.
+* Runtime action dispatch moved to the blocking pool (`spawn_blocking`)
+  — reqwest's blocking client cannot run inside a tokio worker (panic
+  found and fixed during verification).
+* aarch64 release build verified end-to-end on Apple Silicon: binary
+  builds (6.5 MB), starts, `check`/`health`/`run` work, ingest lands in
+  state, graceful shutdown clean, RSS ≈ 8.7 MB.
+* Full battery re-run after changes: 182 Rust tests, clippy 0, fmt
+  clean, SDK suites 12/12 each, MQTT e2e with a real broker, demo
+  script showing `actions_fired: 2` (log + webhook).
 
 ## What was actually verified in this audit
 
 | Check | Result |
 | --- | --- |
 | `cargo check --all-targets` | PASS |
-| `cargo test` | PASS — 170 tests, 0 failed |
+| `cargo test` | PASS — 182 tests, 0 failed (170 at audit + 12 release additions) |
 | `cargo fmt --check` | PASS |
 | `cargo clippy --all-targets` | PASS — 0 warnings |
 | `cargo build --release` + `strip` | PASS — 5.2 MB binary |
@@ -27,6 +44,9 @@ events through pipeline → state → rules → actions.
 | MQTT against real mosquitto (Docker) | PASS — publish → state → rule fired (after audit fix) |
 | MQTT broker-down resilience | PASS after fix — 5 reconnects/3 s, 0% CPU |
 | SIGTERM shutdown (with and without MQTT) | PASS — 18 ms exit (MQTT hang fixed) |
+| Webhook delivery to a live receiver | PASS — JSON body + custom headers verified at the receiver |
+| Webhook failure isolation (dead receiver) | PASS — failure counted, engine healthy |
+| aarch64 release binary run (Apple Silicon) | PASS — version/check/health/run/ingest/shutdown |
 | Restart with snapshot restore | PASS — `restored: 1` |
 | Python SDK suite | PASS — 12/12 incl. live engine |
 | TypeScript SDK suite | PASS — 12/12 incl. live engine |

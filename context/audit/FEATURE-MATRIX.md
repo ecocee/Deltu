@@ -1,4 +1,4 @@
-# Deltu Feature Matrix (Audit 2026-09-26)
+# Deltu Feature Matrix (Audit 2026-09-26; updated for v0.1.0 release readiness)
 
 Status vocabulary: **Implemented** (verified working in this audit),
 **Partial** (works with documented limits), **Missing** (planned but not
@@ -70,7 +70,7 @@ exercised by the audit's live tests, not just read from code.
 | Structured log action (stderr, rendered line) | Implemented | live: audit log lines observed with rule_id/value/ts |
 | Executor trait seam | Implemented | dispatcher tests; AI rides the same seam |
 | Failure isolation (failed action ≠ engine failure) | Implemented | unknown-action test; counted in status |
-| Webhook / HTTP output action | Missing | **spec 06 success-criteria chain names "Webhook"; only log exists — top functional gap for MVP demos** |
+| Webhook / HTTP output action | Implemented (v0.1.0) | 10 tests + live e2e: rule fired → JSON delivered (`rule_id`, payload, ts) with configured headers; URL/method POST-PUT-PATCH/headers/timeout configurable; failures counted, engine healthy after dead receiver |
 | AI action (through policy) | Implemented | dispatcher-level tests (scripted provider) |
 | MQTT publish action | Missing | Future |
 

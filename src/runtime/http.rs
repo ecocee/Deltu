@@ -350,9 +350,32 @@ pub async fn serve(config: RuntimeConfig) -> Result<(), String> {
                 item = rx.recv() => {
                     let Some(item) = item else { break };
                     let now = now_unix_ms();
-                    let outcome = {
+                    // Processing is synchronous, but network actions
+                    // (webhook) must not run on a tokio worker: reqwest's
+                    // blocking client panics inside a runtime context. The
+                    // pipeline/state/rules portion stays here (fast, pure);
+                    // action dispatch hops to the blocking pool when there
+                    // is anything to dispatch.
+                    let has_requests = {
                         let mut core = worker_core.lock().expect("worker poisoned");
-                        core.process_batch(item.events, now)
+                        core.process_pipeline_and_state(item.events, now)
+                    };
+                    let outcome = if has_requests {
+                        let core = worker_core.clone();
+                        tokio::task::spawn_blocking(move || {
+                            let mut core = core.lock().expect("worker poisoned");
+                            core.dispatch_pending(now)
+                        })
+                        .await
+                        .unwrap_or_else(|_| CoreOutcome {
+                            accepted: Vec::new(),
+                            action_outcomes: Vec::new(),
+                        })
+                    } else {
+                        CoreOutcome {
+                            accepted: Vec::new(),
+                            action_outcomes: Vec::new(),
+                        }
                     };
                     let _ = item.reply.send(outcome);
                 }

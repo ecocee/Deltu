@@ -36,6 +36,12 @@ pub enum ActionConfigError {
     EmptyActionId(String),
     /// Two action definitions shared the same id.
     DuplicateActionId(String),
+    /// A webhook action's configuration was invalid (URL, timeout,
+    /// headers). Named at construction time, never at runtime.
+    InvalidWebhook {
+        /// What was wrong, with the offending value where actionable.
+        reason: String,
+    },
 }
 
 impl fmt::Display for ActionConfigError {
@@ -46,6 +52,9 @@ impl fmt::Display for ActionConfigError {
             }
             ActionConfigError::DuplicateActionId(id) => {
                 write!(f, "duplicate action id: {id}")
+            }
+            ActionConfigError::InvalidWebhook { reason } => {
+                write!(f, "invalid webhook action: {reason}")
             }
         }
     }

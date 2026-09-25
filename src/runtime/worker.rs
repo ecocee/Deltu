@@ -21,6 +21,12 @@ pub struct EngineCore {
     /// Last known queue depth (reported by the worker for /v1/status;
     /// an mpsc sender cannot observe the channel's internal length).
     pub last_queue_depth: usize,
+    /// Action requests queued by `process_pipeline_and_state` for
+    /// `dispatch_pending` (single-batch handoff; the worker is strictly
+    /// one-item-at-a-time).
+    pending_requests: Vec<ActionRequest>,
+    /// Accept flags of the batch being handed off (same contract).
+    pending_accepted: Vec<bool>,
 }
 
 /// What one pass through the core produced (for the HTTP layer's response).
@@ -45,6 +51,8 @@ impl EngineCore {
             rules,
             actions,
             last_queue_depth: 0,
+            pending_requests: Vec::new(),
+            pending_accepted: Vec::new(),
         }
     }
 
@@ -117,6 +125,62 @@ impl EngineCore {
             action_outcomes = self.actions.dispatch(&requests, now_ms);
         }
 
+        CoreOutcome {
+            accepted,
+            action_outcomes,
+        }
+    }
+
+    /// Runs the synchronous part of a batch (pipeline → state → rules) and
+    /// queues any action requests for [`Self::dispatch_pending`]. Returns
+    /// whether requests are pending — the runtime dispatches those on the
+    /// blocking pool (network actions must never run on a tokio worker).
+    /// The `accepted` flags ride through `last_accepted` (single-batch
+    /// handoff; the worker processes one item at a time).
+    pub fn process_pipeline_and_state(
+        &mut self,
+        events: Vec<crate::event::Event>,
+        _now_ms: i64,
+    ) -> bool {
+        let mut accepted = Vec::with_capacity(events.len());
+        let mut requests: Vec<ActionRequest> = Vec::new();
+
+        for event in events {
+            let outputs = self.pipeline.process(event.clone());
+            for output in &outputs {
+                self.state.observe(output);
+            }
+            for output in &outputs {
+                match output {
+                    crate::processing::Output::Event(event) => {
+                        let input = crate::rules::EvalInput::from_event(event, &self.state);
+                        requests.extend(self.rules.evaluate(&input));
+                    }
+                    crate::processing::Output::Aggregated(summary) => {
+                        let input = crate::rules::EvalInput::from_aggregated(summary, &self.state);
+                        requests.extend(self.rules.evaluate(&input));
+                    }
+                }
+            }
+            accepted.push(true); // reached the pipeline
+        }
+
+        self.pending_accepted = accepted;
+        self.pending_requests = requests;
+        !self.pending_requests.is_empty()
+    }
+
+    /// Dispatches the requests queued by [`Self::process_pipeline_and_state`].
+    /// Called on the blocking pool so network executors (webhook) never run
+    /// inside a tokio runtime context.
+    pub fn dispatch_pending(&mut self, now_ms: i64) -> CoreOutcome {
+        let requests = std::mem::take(&mut self.pending_requests);
+        let accepted = std::mem::take(&mut self.pending_accepted);
+        let action_outcomes = if requests.is_empty() {
+            Vec::new()
+        } else {
+            self.actions.dispatch(&requests, now_ms)
+        };
         CoreOutcome {
             accepted,
             action_outcomes,

@@ -60,6 +60,41 @@ EOF
 ./deltu run --config engine.yaml
 ```
 
+### Action kinds
+
+**`log`** — one structured JSON line on stderr:
+
+```yaml
+actions:
+  - id: demo-log
+    kind:
+      type: log
+      level: info        # debug | info | warn | error
+      template: null     # optional, {rule_id} / {payload} placeholders
+```
+
+**`webhook`** — delivers the rule snapshot as one JSON document
+(`{rule_id, action, payload, ts_ms}`) to an HTTP endpoint. One bounded
+synchronous request per firing; **no retries**; failures (connection
+refused, timeout, non-2xx) are counted in `/v1/status` →
+`actions.failed` and never stop the engine:
+
+```yaml
+actions:
+  - id: notify-slack
+    kind:
+      type: webhook
+      url: https://example.com/hooks/deltu
+      method: post           # post (default) | put | patch
+      timeout_ms: 3000       # default 3000, max 30000
+      headers:               # optional, max 16 headers
+        - name: authorization
+          value: Bearer <token>
+```
+
+Configuration errors (bad URL, out-of-range timeout) are rejected at
+`deltu check` / startup — never mid-run.
+
 Environment overrides: `DELTU_HTTP_BIND`, `DELTU_QUEUE_CAPACITY`,
 `DELTU_SNAPSHOT_INTERVAL_SECS`.
 
@@ -120,7 +155,26 @@ process restores the snapshot on startup and logs
 `restored N state entries`. Format version mismatches fail loudly —
 export via your own tooling before major upgrades.
 
-## 7. Scope
+## 7. Security boundary
+
+**The HTTP API has no built-in authentication and must not be exposed
+directly to an untrusted network.** The default configuration binds to
+loopback (`127.0.0.1`) — keep it that way unless the port is protected:
+
+```text
+Internet / Untrusted Network
+          ↓
+Reverse Proxy / Network Access Control
+          ↓
+        DELTU
+```
+
+Put Deltu behind an authenticating reverse proxy or network access
+control when it must accept traffic from other hosts. MQTT brokers and
+webhook receivers are part of your trust boundary too — protect
+credentials and snapshot files accordingly.
+
+## 8. Scope
 
 No Kubernetes manifests, no Helm charts, no telemetry. GitHub Releases
 is the only distribution channel; Docker images are built locally or by

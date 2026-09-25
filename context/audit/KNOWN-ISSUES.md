@@ -1,4 +1,4 @@
-# Deltu Known Issues (Audit 2026-09-26)
+# Deltu Known Issues (Audit 2026-09-26; updated for v0.1.0 release readiness)
 
 Issues found by the audit, with severity, status, and disposition.
 "Bugs fixed in audit" are closed — listed because they shipped in
@@ -28,17 +28,19 @@ commits and reviewers should know the history.
    `value` envelope (and the module doc finally matches the code);
    2 new tests. Verified end-to-end with a real broker.
 
-## Open — functional gaps (prioritized)
+## Open — functional gaps (prioritized; updated 2026-09-26)
 
-1. **No webhook/HTTP output action** (HIGH for demos). The MVP success
-   chain (project-overview criterion 25) ends in "Webhook"; only the
-   structured-log action exists today. Integrate externally via the
-   engine API or logs until this ships. Effort: small — the executor
-   trait and failure-isolation pattern are established.
+1. ~~**No webhook/HTTP output action**~~ **CLOSED (v0.1.0):**
+   `ActionKind::Webhook` shipped — configurable URL, method
+   (POST/PUT/PATCH), headers, timeout (1..=30000 ms); one bounded
+   request per firing, no retries; failures counted, engine continues.
+   Verified with 10 tests and a live e2e (rule → webhook → receiver
+   asserting body and headers).
 2. **No engine-side authentication** (HIGH if exposed beyond
    localhost). The API is unauthenticated; SDKs accept an `api_key` but
    the engine ignores it. Mitigation: bind loopback (default) and front
-   with an authenticating proxy. Security.md documents this honestly.
+   with an authenticating proxy — the deployment boundary is documented
+   in `docs/deploy.md` §Security boundary and `SECURITY.md`.
 3. **No MQTT publish (output) action** (MEDIUM). Inbound-only MQTT
    today; the compose demo's "publish" path is aspirational until the
    action exists.
@@ -60,10 +62,14 @@ commits and reviewers should know the history.
 
 ## Open — release-engineering gaps
 
-7. **Release workflow unexercised** (MEDIUM). `release.yml` (3-target
-   build, checksums, GitHub Release) has never run against a real tag.
-   Expect first-run friction (e.g. `cross` install time, artifact
-   naming). Do a `v0.1.0-rc*` dry run before the public tag.
+7. **Release workflow unexercised on GitHub** (MEDIUM).
+   `release.yml` (3-target build, checksums, GitHub Release) has never
+   run against a real tag — GitHub Actions cannot be executed from this
+   environment. Locally verified instead: the aarch64 release build
+   compiles clean and the resulting ARM64 binary was executed
+   end-to-end (health, ingest, status, graceful shutdown); Linux
+   targets use the same dependency set. Do a `v0.1.0-rc1` tag dry run
+   before the public release to exercise `cross` and the checksum job.
 8. **Docker image unverified locally** (LOW). The local Docker daemon
    was unavailable during Units 13–14; verification rides on the CI
    smoke workflow. The mosquitto container *was* used in this audit,
