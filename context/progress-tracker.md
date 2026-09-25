@@ -95,8 +95,11 @@ Update this file after every meaningful implementation change.
 
 ## Next Up
 
-- After Unit 04: write `context/specs/05-rules.md` (deterministic typed
-  condition evaluation over events and state per `research/rules.md`).
+- Implement Unit 04, then proceed unit by unit. All downstream specs
+  (05–14) are pre-drafted as separate files (see
+  `context/specs/README.md`); each must be re-verified and finalized at
+  its unit start — pre-drafts are inputs to the Definition of Ready, not
+  substitutes for the review pass.
 
 ## Open Questions
 
@@ -125,7 +128,12 @@ Update this file after every meaningful implementation change.
 - Unit 01 was implemented strictly within spec scope: no dependencies, no
   async runtime (decision 004), no event-engine code. The next unit begins
   with its spec, per the workflow rules.
-- Git: Units 00–01 on `feat/01-rust-foundation`; Units 02–03 on
+- Specs 05–14 pre-drafted 2026-09-25 as separate files with a
+  `specs/README.md` status index; all marked PRE-DRAFTED (finalize at unit
+  start). Spec 07 records the deliberate retirement of decision 004;
+  spec 09 records the recommended resolution of the binary-name question
+  (`deltu`).
+- Git: Units 00–01 on `feat/01-rust-foundation`; Units 02–04 specs on
   `feat/02-event-model` and `feat/03-processing-core`. Direct pushes from
   the coding shell lack HTTPS credentials; sync via the client or a
   credentialed environment.
