@@ -2,10 +2,14 @@
 
 pub mod event;
 pub mod processing;
+pub mod state;
 
 pub use event::{Event, EventError, Payload};
 pub use processing::{
     Aggregated, Output, PipelineConfig, PipelineConfigError, PipelineCounters, ProcessingPipeline,
+};
+pub use state::{
+    StateConfig, StateCounters, StateEntry, StateError, StateKey, StateStore, StateValue,
 };
 
 /// Returns the engine version from Cargo metadata.

@@ -4,17 +4,43 @@ Update this file after every meaningful implementation change.
 
 ## Current Phase
 
-- Unit 04 — State Engine: **IN PROGRESS** (spec written, ready to implement)
+- Unit 05 — Rules: **NOT STARTED** (pre-drafted spec 05 to be finalized first)
 
 ## Current Goal
 
-- Implement `context/specs/04-state-engine.md`: the keyed, bounded,
-  expiring current-state store (`StateStore`) with its observe write path,
-  narrow read interface, periodic expiration, and criterion benchmark —
-  then verify the complete checklist.
+- Finalize `context/specs/05-rules.md` at unit start, then implement the
+  deterministic rule engine over pipeline outputs and current state.
 
 ## Completed
 
+- Unit 04 — State Engine: **COMPLETE** (2026-09-25, per
+  `context/specs/04-state-engine.md`, branch `feat/04-state-engine`)
+  - `StateStore` keyed by `(source, kind)` mirroring the pipeline keying;
+    `StateValue` mirrors `Payload` (no serde, per spec); entries carry
+    `previous_value`, `updated_at_ms`, `updates`.
+  - `observe(&Output)` write path: raw events store their payload value at
+    `event.timestamp`; aggregated summaries store the window mean at
+    `window_end_ms`; re-observation sets `previous_value`, increments
+    `updates`, refreshes recency.
+  - Narrow read interface: `get`, `entries()` sorted by key for
+    deterministic downstream evaluation, `len`/`is_empty`/`counters`.
+  - Clock-free periodic expiration: `expire(now_ms)` removes and returns
+    entries with `age >= expire_after_ms`; boundary expires; negative ages
+    (clock skew) never expire; `None` disables.
+  - Capacity bounding: LRU-by-last-update eviction (stalest victim, ties by
+    insertion order) — deliberately different from Unit 03's FIFO dedup.
+  - Benchmarks: `benchmarks/state.rs` registered as a second explicit
+    `[[bench]]` target; both spec cases ran.
+  - Verification results: `cargo check --all-targets` clean; `cargo build`
+    ok; `cargo test` 82 passed / 0 failed (61 prior + 21 new);
+    `cargo run` → `deltu 0.1.0`; `cargo fmt --check` clean;
+    `cargo clippy --all-targets` 0 warnings; no new dependencies.
+  - Benchmark results (criterion 0.8.2, Apple M5, idle dev machine, bench
+    profile, 100 samples):
+    - `state_observe_100_events`: 7.35 µs/100-event batch (~74 ns/event).
+    - `state_expire_scan_10k`: 885 µs full-population scan at the default
+      10_000-entry capacity (~89 ns/entry; removal + return of all 10k).
+    Numbers are the documented starting point for this hardware only.
 - Unit 03 — Processing Core: **COMPLETE** (2026-09-25, per
   `context/specs/03-processing-core.md`, branch `feat/03-processing-core`)
   - Four synchronous, clock-free stages: `KindFilter` (exact-kind or
@@ -84,22 +110,14 @@ Update this file after every meaningful implementation change.
 
 ## In Progress
 
-- Unit 04 — State Engine (started 2026-09-25)
-  - Spec complete: `context/specs/04-state-engine.md` — `StateKey` =
-    `(source, kind)`, `StateValue` mirror of `Payload` (no serde),
-    observe-based write path from pipeline outputs, sorted deterministic
-    reads, injected-clock periodic expiration returning evicted entries,
-    LRU-by-last-update capacity bounding, conservative defaults
-    (10k entries / 5-min expiry), zero new dependencies.
-  - Implementation not started.
+- None.
 
 ## Next Up
 
-- Implement Unit 04, then proceed unit by unit. All downstream specs
-  (05–14) are pre-drafted as separate files (see
-  `context/specs/README.md`); each must be re-verified and finalized at
-  its unit start — pre-drafts are inputs to the Definition of Ready, not
-  substitutes for the review pass.
+- Unit 05 — Rules: finalize the pre-drafted `context/specs/05-rules.md`,
+  then implement and verify. All downstream specs (05–14) exist as
+  pre-drafts (see `context/specs/README.md`); each is finalized at its
+  unit start per the workflow.
 
 ## Open Questions
 
@@ -123,8 +141,9 @@ Update this file after every meaningful implementation change.
 
 - Repository layout: `Cargo.toml` (package `deltu` 0.1.0, edition 2024;
   deps: serde, serde_json; dev-dep: criterion), `Cargo.lock`, `src/`
-  (`lib.rs`, `main.rs`, `event/`, `processing/`), `benchmarks/processing.rs`,
-  `target/` (ignored), plus the original `context/` and `AGENT.md`.
+  (`lib.rs`, `main.rs`, `event/`, `processing/`, `state/`),
+  `benchmarks/{processing,state}.rs`, `target/` (ignored), plus the
+  original `context/` and `AGENT.md`.
 - Unit 01 was implemented strictly within spec scope: no dependencies, no
   async runtime (decision 004), no event-engine code. The next unit begins
   with its spec, per the workflow rules.
@@ -133,7 +152,7 @@ Update this file after every meaningful implementation change.
   start). Spec 07 records the deliberate retirement of decision 004;
   spec 09 records the recommended resolution of the binary-name question
   (`deltu`).
-- Git: Units 00–01 on `feat/01-rust-foundation`; Units 02–04 specs on
-  `feat/02-event-model` and `feat/03-processing-core`. Direct pushes from
-  the coding shell lack HTTPS credentials; sync via the client or a
-  credentialed environment.
+- Git: Units 00–01 on `feat/01-rust-foundation`; Units 02–03 (and specs
+  04–14) on `feat/02-event-model` / `feat/03-processing-core`; Unit 04 on
+  `feat/04-state-engine`. Direct pushes from the coding shell lack HTTPS
+  credentials; sync via the client or a credentialed environment.

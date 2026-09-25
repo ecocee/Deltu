@@ -16,3 +16,8 @@ criterion = { version = "0.8.2", features = ["html_reports"] }
 name = "processing"
 path = "benchmarks/processing.rs"
 harness = false
+
+[[bench]]
+name = "state"
+path = "benchmarks/state.rs"
+harness = false

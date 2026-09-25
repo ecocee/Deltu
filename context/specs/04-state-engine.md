@@ -1,6 +1,6 @@
 # Spec 04 — State Engine
 
-Status: DRAFT (ready to implement) · Depends on: Unit 03 (Processing Core)
+Status: COMPLETE (implemented & verified 2026-09-25) · Depends on: Unit 03 (Processing Core)
 
 ## Goal
 
