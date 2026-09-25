@@ -11,6 +11,8 @@ pub mod log_action;
 
 use std::time::Instant;
 
+use serde::{Deserialize, Serialize};
+
 pub use error::{ActionConfigError, ActionError};
 pub use log_action::LogLevel;
 
@@ -19,7 +21,7 @@ use crate::rules::ActionRequest;
 /// What to execute for a configured action id. Network transports
 /// (webhook, MQTT publish) implement this same trait when they land with
 /// the async runtime in Units 07/08 — dispatch semantics do not change.
-pub trait ActionExecutor: std::fmt::Debug {
+pub trait ActionExecutor: std::fmt::Debug + Send {
     /// Executes one request to completion. Implementations must not panic
     /// on plausible external failures; returned errors become outcomes.
     fn execute(
@@ -39,7 +41,8 @@ pub struct ActionSummary {
 /// The behavior of a configured action. Network transports are defined
 /// here but become executable in Units 07/08 (documented build-order
 /// refinement: no HTTP client crate before the async runtime exists).
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
 pub enum ActionKind {
     /// Writes one structured JSON line per execution.
     Log {
@@ -52,7 +55,7 @@ pub enum ActionKind {
 }
 
 /// A configured action: its id plus its behavior.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ActionDefinition {
     /// Unique, non-empty action id (rules reference this).
     pub id: String,

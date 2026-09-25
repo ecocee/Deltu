@@ -1,6 +1,6 @@
 # Spec 07 — Runtime & HTTP
 
-Status: DRAFT (pre-drafted on request; finalize at unit start) · Depends on: Units 03–06 (Pipeline, State, Rules, Actions contract)
+Status: COMPLETE (implemented & verified 2026-09-25) · Depends on: Units 03–06 (Pipeline, State, Rules, Actions contract)
 
 ## Goal
 
@@ -67,6 +67,40 @@ tokio-native; ARM64-safe (research/edge.md).
 5. Benchmark deferred to Unit 10 (runtime metrics become measurable there).
 6. Scope guard: no MQTT, no SDKs, no persistence, no AI, no auth beyond
    optional static API key check.
+
+## Finalized at Unit Start (review pass, 2026-09-25)
+
+Decisions made during implementation, recorded here:
+
+1. **Decision 004 retired exactly as planned**: `tokio` 1.53 (rt-multi-thread,
+   macros, signal, time) + `axum` 0.8.9 + `serde_yaml` 0.9 + dev-only
+   `tower` (util) are the dependency set. `tracing`/`tracing-subscriber`
+   are **deferred to the CLI unit (09)** with the LogAction migration — the
+   log action already produces structured lines, so the logging framework
+   adds nothing in this unit (dependency rule).
+2. **Config layer**: `RuntimeConfig` (YAML/JSON file, `deny_unknown_fields`,
+   all-optional sections defaulting to the documented module configs) with
+   `DELTU_HTTP_BIND` / `DELTU_QUEUE_CAPACITY` env overrides and
+   referential validation (rule → action must resolve; unique ids).
+   `PipelineConfig`/`StateConfig`/rule/action definitions gained serde
+   derives for this (existing dependencies only).
+3. **Error envelope completeness**: the events handler takes raw bytes and
+   parses explicitly, so *malformed JSON* also returns the documented
+   envelope (the `Json` extractor's default rejection would have bypassed
+   it). Success returns **202** (accepted for processing) as documented.
+4. **Queue depth observability**: an mpsc sender cannot read channel
+   length; the worker reports the last-known depth on the core, surfaced
+   by `/v1/status`.
+5. **Worker shape**: the core (Units 03–06) is owned behind a `std::sync::Mutex`
+   and driven by a tokio worker task from a bounded mpsc queue
+   (`try_send` → 429 on overflow) with a periodic 30s state-expiration
+   tick. Graceful shutdown on SIGINT/SIGTERM via `with_graceful_shutdown`.
+6. **Fixed during verification**: `get_status` originally double-locked the
+   core mutex (self-deadlock — caught by the test suite hanging);
+   rewritten as a single lock acquisition. Numeric events accumulate into
+   open windows by design and do not fire rules until a summary closes —
+   immediate rule firing happens on passthrough events; worker tests
+   corrected to match this documented dataflow.
 
 ## Verify When Done
 

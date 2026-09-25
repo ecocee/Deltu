@@ -5,10 +5,12 @@
 //! `tracing` arrives with the runtime in Unit 07 and this action migrates
 //! to it there.
 
+use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
 /// Severity levels for log actions (closed set; serialized lowercase).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum LogLevel {
     /// Debug severity.
     Debug,

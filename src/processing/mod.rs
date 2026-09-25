@@ -20,7 +20,8 @@ pub use filter::KindFilter;
 /// Configuration for [`ProcessingPipeline`]. Defaults are conservative for
 /// edge-class devices and are a documented starting point, not performance
 /// claims.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
 pub struct PipelineConfig {
     /// `None` allows every kind; the default must not silently drop data.
     pub allowed_kinds: Option<Vec<String>>,

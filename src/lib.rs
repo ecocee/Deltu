@@ -4,7 +4,10 @@ pub mod actions;
 pub mod event;
 pub mod processing;
 pub mod rules;
+pub mod runtime;
 pub mod state;
+
+pub use runtime::{ConfigError, RuntimeConfig, serve};
 
 pub use actions::{ActionConfigError, ActionError, ActionExecutor, ActionSummary, LogLevel};
 pub use actions::{ActionCounters, ActionDefinition, ActionDispatcher, ActionKind, ActionOutcome};

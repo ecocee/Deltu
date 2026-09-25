@@ -14,7 +14,7 @@ their unit on request and must be re-verified and finalized at unit start.
 | [04-state-engine.md](04-state-engine.md) | 04 — State Engine | COMPLETE |
 | [05-rules.md](05-rules.md) | 05 — Rules | COMPLETE |
 | [06-actions.md](06-actions.md) | 06 — Actions | COMPLETE |
-| [07-runtime-http.md](07-runtime-http.md) | 07 — Runtime & HTTP | PRE-DRAFTED |
+| [07-runtime-http.md](07-runtime-http.md) | 07 — Runtime & HTTP | COMPLETE |
 | [08-mqtt.md](08-mqtt.md) | 08 — MQTT | PRE-DRAFTED |
 | [09-cli.md](09-cli.md) | 09 — CLI | PRE-DRAFTED |
 | [10-metrics.md](10-metrics.md) | 10 — Metrics | PRE-DRAFTED |
@@ -28,7 +28,7 @@ their unit on request and must be re-verified and finalized at unit start.
 * Units 11+ are the optional layer (AI, persistence): the engine is fully
   functional without them, per decision 003 and the build plan's dependency
   and infrastructure rules.
-* Spec 07 retires decision 004 (deferred async runtime) — that is where the
-  first runtime dependency lands, deliberately.
+* Spec 07 retires decision 004 (deferred async runtime) — the runtime
+  dependency landed there, deliberately.
 * Pre-drafted specs are inputs to their unit's Definition of Ready, not
   substitutes for the review pass at unit start.

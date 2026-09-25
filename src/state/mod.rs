@@ -9,7 +9,8 @@ pub use store::{StateEntry, StateKey, StateStore, StateValue};
 /// Configuration for [`StateStore`](store::StateStore). Defaults are
 /// conservative for edge-class devices and are a documented starting point,
 /// not performance claims.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
 pub struct StateConfig {
     /// Maximum retained entries regardless of input volume. Default 10_000.
     pub max_entries: usize,
