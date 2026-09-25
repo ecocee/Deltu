@@ -4,13 +4,14 @@ Update this file after every meaningful implementation change.
 
 ## Current Phase
 
-- Unit 03 — Processing Core: **NOT STARTED** (spec to be written first)
+- Unit 03 — Processing Core: **IN PROGRESS** (spec written, ready to implement)
 
 ## Current Goal
 
-- Write `context/specs/03-processing-core.md` (filter → deduplicate →
-  aggregate → change-detect stages per `research/event-processing.md`),
-  then implement and verify the pipeline stages.
+- Implement `context/specs/03-processing-core.md`: the four reduction stages
+  (filter, deduplication, aggregation, change detection) plus their
+  composition, counters, and criterion benchmark — then verify the
+  complete checklist.
 
 ## Completed
 
@@ -52,13 +53,19 @@ Update this file after every meaningful implementation change.
 
 ## In Progress
 
-- None.
+- Unit 03 — Processing Core (started 2026-09-25)
+  - Spec complete: `context/specs/03-processing-core.md` — stage semantics
+    (kind filter, bounded dedup, tumbling event-time windows, deadband
+    change detection), bounded-state invariants, config/error model,
+    criterion benchmark requirement, scope guard (no state/rules/actions/
+    queues/IO).
+  - Implementation not started.
 
 ## Next Up
 
-- Unit 03 — Processing Core: write `context/specs/03-processing-core.md`
-  (filter → deduplicate → aggregate → change-detect stages per
-  `research/event-processing.md`), then implement and verify it.
+- After Unit 03: write `context/specs/04-state-engine.md` (keyed current-
+  state store with bounded capacity and expiration per
+  `research/state.md`).
 
 ## Open Questions
 
