@@ -1,6 +1,6 @@
 # Spec 11 — Local AI (Optional Layer)
 
-Status: DRAFT (pre-drafted on request; finalize at unit start) · Depends on: Units 03–10 (complete deterministic core) · Optional: engine runs fully without this unit
+Status: COMPLETE (implemented & verified 2026-09-25; finalized semantics below) · Depends on: Units 03–10 (complete deterministic core) · Optional: engine runs fully without this unit
 
 ## Goal
 
@@ -72,6 +72,29 @@ pub trait AiProvider: Send {
 Feature-gated only: `ort` (ai-onnx), `llama-cpp-2` (ai-llamacpp) — each
 justified against the dependency rule and the edge research at
 implementation time. Core dependencies unchanged.
+
+## Finalized at Unit Start (review pass, 2026-09-25)
+
+1. **Scope for this unit:** the AI *boundary* — `AiProvider` trait,
+   `AiManager` with usage metrics, the invocation policy, and the scripted
+   in-memory provider used for tests/CI. The `ort`/`llama-cpp-2` runtimes
+   stay behind future cargo features (`ai-onnx`, `ai-llamacpp`) exactly as
+   pre-drafted; nothing AI compiles into the default build (there are no
+   AI crates in `Cargo.toml` at all — stricter than the spec's
+   feature-gate wording, and correct per the dependency rule).
+2. **Policy enforcement point:** the manager lives inside
+   `ActionDispatcher`; `ActionKind::Ai` requests route through it during
+   dispatch, and every other action kind provably never touches it
+   (tested). `request_from_action` is the sole constructor of AI requests.
+3. **Without a configured provider**, `Ai` actions fail fast as counted
+   outcomes (`no ai provider is configured`) — honest failure, engine
+   unaffected (invariant 1).
+4. **Usage metrics** surface in `/v1/status` under
+   `actions.ai.{calls,succeeded,failed,tokens_used,latency_ms}`.
+5. **Latency benchmark deferred:** the scripted provider is instant, so a
+   benchmark would measure nothing real; the pre-drafted "request-building
+   overhead" bench adds no information at this layer and is skipped
+   (documented deviation, revisit with a real runtime).
 
 ## Verify When Done
 
