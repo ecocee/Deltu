@@ -37,9 +37,46 @@ every unit carries its spec, verification results, and commit history
 
 ## Quick start
 
-```bash
-cargo run --release -- run          # binds 127.0.0.1:8080
+### 1. Install (pick one path)
+
+```mermaid
+flowchart LR
+    start([New user]) --> q{"How do you want to run Deltu?"}
+    q -->|Simplest| rel["Download a release binary"]
+    q -->|Have Rust| cargo["cargo build"]
+    q -->|Have Docker| docker["docker build"]
+    rel --> step2
+    cargo --> step2
+    docker --> step2
+    step2["Write engine.yaml: inputs + rules + actions"] --> check
+    check["deltu check — validate before deploying"] -->|ok| run
+    check -->|error| fix["Fix the named problem"] --> check
+    run["deltu run  (or: deltu up for background)"] --> send
+    send["Send events: HTTP / MQTT / SDK"] --> watch
+    watch["deltu status · deltu logs — actions fire, counters grow"]
 ```
+
+**Path A — download a release binary** (no toolchain needed):
+
+```bash
+# from https://github.com/ecocee/Deltu/releases
+deltu run                              # defaults: 127.0.0.1:8080
+```
+
+**Path B — build from source** (needs Rust 1.75+):
+
+```bash
+cargo run --release -- run             # binds 127.0.0.1:8080
+```
+
+**Path C — Docker**:
+
+```bash
+docker build -t deltu:local .
+docker run -d -p 8080:8080 deltu:local run
+```
+
+### 2. Send your first event and watch it work
 
 ```bash
 curl -s http://127.0.0.1:8080/health
@@ -50,26 +87,71 @@ curl -s -X POST http://127.0.0.1:8080/v1/events \
 curl -s http://127.0.0.1:8080/v1/status | python3 -m json.tool
 ```
 
-`deltu run --config engine.yaml` for rules, actions, MQTT, persistence,
-and HTTP tuning; `deltu check --config engine.yaml` validates before
-deployment. Full guide: [`docs/deploy.md`](docs/deploy.md).
+The whole lifecycle from a shell:
+
+```bash
+deltu up --config engine.yaml     # start in the background, wait for /health
+deltu status                      # live counters
+./examples/demo.sh 8211           # send demo events, see rules fire
+deltu logs --lines 50             # see the structured action output
+deltu down                        # graceful stop
+```
+
+Write rules, actions, MQTT and persistence in `engine.yaml`;
+`deltu check --config engine.yaml` validates it before deployment.
+Full guide: [`docs/deploy.md`](docs/deploy.md).
+
+### How an event flows through Deltu
+
+```mermaid
+flowchart TD
+    A["HTTP POST /v1/events"] --> V
+    B["MQTT broker subscription"] --> V
+    C["Python / TypeScript SDK"] --> A
+    V["Validate at the boundary: shape, types, timestamp, payload"]
+    V -->|invalid| R1["400 invalid_event — counted + named"]
+    V --> Q[("Bounded queue — backpressure: 429 when full")]
+    Q --> W["Worker — synchronous, one batch at a time"]
+    W --> F["Filter: kind allow-list"]
+    F --> D["Dedup: bounded id cache"]
+    D --> G["Aggregate: tumbling windows — mean / min / max / last"]
+    G --> CH["Change detection: deadband suppresses noise"]
+    CH --> S[("State: keyed current values, bounded + periodic expiry")]
+    W --> RU["Rules: event / state triggers, typed comparisons, suppression"]
+    S --> RU
+    RU -->|no rule fires| Quiet[("Counters still update — everything is observable")]
+    RU -->|match| ACT["Actions"]
+    ACT --> L1["log: structured JSON line"]
+    ACT --> L2["webhook: one bounded JSON request, no retries"]
+    ACT -.->|only if configured| AI["AI provider — optional, policy-gated"]
+    ACT -->|failure| ISO["Counted in /v1/status — engine keeps running"]
+```
 
 ## Architecture
 
-```text
-HTTP /v1/events ─┐                     ┌─> actions (log | ai)
-MQTT adapter ────┼─> bounded queue ─> worker ─┬─ pipeline
-                 │      (backpressure)        │   filter → dedup →
-                 └── validation at the        │   aggregate → change
-                         boundary             ├─ state (keyed, bounded,
-                                              │   periodic expiry)
-                                              └─ rules (event/state
-                                                  triggers → actions)
+```mermaid
+flowchart LR
+    subgraph boundary["Input boundary — validation only"]
+        HTTP["HTTP /v1/events"] --> Q
+        MQTT["MQTT adapter — reconnect + backoff"] --> Q
+    end
+    Q[("Bounded queue — backpressure")] --> W["Worker loop — synchronous core"]
+    W --> P["Pipeline"] --> ST[("State store")]
+    P --> RU["Rule engine"] --> AC["Actions — log · webhook · AI-optional"]
+    ST --> RU
+    W -.-> M["Metrics + counters — /v1/status"]
+    P -.-> M
+    ST -.-> M
+    RU -.-> M
+    AC -.-> M
+    ST -.->|optional| PS["Local snapshots — restore on restart"]
 ```
 
 Processing is synchronous inside one worker; HTTP and MQTT handlers
 only validate and enqueue. The bounded queue is the backpressure
 boundary — overload answers `429 queue_full`, handlers never process.
+Network actions (webhook) run on the blocking pool: a slow receiver
+never stalls the pipeline.
 
 | Module | What it does |
 | --- | --- |
@@ -144,6 +226,37 @@ await client.sendEvent(new Event({ id: "e1", source: "sensor-1",
 
 Zero runtime dependencies beyond the HTTP client; retries off by
 default, exponential backoff for 429/503 only.
+
+## What can you build with Deltu?
+
+Deltu is **not IoT-only** — any system that emits events over HTTP or
+MQTT can use it. The same engine, inputs, and actions serve very
+different jobs:
+
+```mermaid
+flowchart TD
+    DELTU["Deltu engine — one binary, no database"] --> U1
+    DELTU --> U2
+    DELTU --> U3
+    DELTU --> U4
+    U1["Sensors & devices"] --> W1["Threshold alerts: MQTT/HTTP in — dedup + window + rule + webhook out"]
+    U2["Applications & APIs"] --> W2["Event pipelines: app/API events via SDK — filter noise, aggregate, notify"]
+    U3["Servers & infrastructure"] --> W3["Ops monitors: pushed CPU/latency/queue metrics — change detection + actions"]
+    U4["Business processes"] --> W4["State tracking: orders/jobs/devices — transitions fire suppressed actions"]
+```
+
+| Use case | Inputs | What Deltu adds | Typical action |
+| --- | --- | --- | --- |
+| Sensor/telemetry alerts | MQTT, HTTP | dedup + windows + threshold rules | webhook, log |
+| App/API event reduction | HTTP, SDKs | kind filters, dedup, counters | webhook |
+| Infra metric monitors | HTTP push | change detection with deadband | log, webhook |
+| Device/job state tracking | MQTT, HTTP | keyed current state + transitions | webhook, log |
+| Edge / offline-first | MQTT, HTTP | single small binary, local snapshots, no cloud | log, webhook |
+| Anomaly watching | any | window stats (min/max/mean/last) to rules | webhook, log |
+
+See [`context/audit/USE-CASES.md`](context/audit/USE-CASES.md) for
+verified details per use case, and the demo below for a runnable
+example.
 
 ## Docker
 
