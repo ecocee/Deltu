@@ -1,0 +1,22 @@
+{
+  "name": "@deltu/client",
+  "version": "0.1.0",
+  "description": "TypeScript client for the Deltu event engine (public v1 API)",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": ["dist", "README.md"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "tsc -p tsconfig.json && node --test tests/*.test.mjs",
+    "example": "node examples/send.mjs"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.0",
+    "@types/node": "^22.0.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

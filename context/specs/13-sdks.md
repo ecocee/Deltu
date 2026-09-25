@@ -1,6 +1,6 @@
 # Spec 13 — SDKs (Python, TypeScript)
 
-Status: DRAFT (pre-drafted on request; finalize at unit start) · Depends on: Unit 07 (documented public HTTP API), Unit 10 (status surface)
+Status: COMPLETE (implemented & verified 2026-09-25; finalized semantics below) · Depends on: Unit 07 (documented public HTTP API), Unit 10 (status surface)
 
 ## Goal
 
@@ -60,7 +60,36 @@ vitest. Nothing else.
 
 ## Verify When Done
 
-* [ ] Both packages install, examples run against a live engine.
-* [ ] SDK test suites + live e2e CI job green.
-* [ ] Public API coverage matches the Unit 07 documented surface; tracker
+* [x] Both packages install, examples run against a live engine.
+* [x] SDK test suites + live e2e CI job green.
+* [x] Public API coverage matches the Unit 07 documented surface; tracker
       updated.
+
+## Finalized at Unit Start (review pass, 2026-09-25)
+
+1. **Local validation is a pre-flight only** mirroring spec 02 rules with
+   the engine's message text; the engine remains the validator of record
+   and its errors are surfaced verbatim (SDK never re-decides).
+2. **Error mapping covers exactly the documented codes** (400/413/429/503
+   → four distinct types); any other non-2xx surfaces as the base
+   `DeltuError` carrying the envelope's `code` — no guessing, no
+   swallow-and-retry.
+3. **Retries are off by default**, exponential backoff, 429/503 only —
+   matching the engine's own `queue_full` advice; 400/413 are never
+   retried.
+4. **Payload typing mirrors the wire**: Python tagged dicts with helper
+   constructors (`text()`, `numeric()`, `boolean()`, `structured()`,
+   `null()`); TypeScript a discriminated union over the same shapes.
+5. **`StatusSnapshot` maps snake_case → idiomatic casing** field-for-field
+   from spec 10 and keeps the raw body (`raw`) so new engine fields are
+   visible without an SDK release.
+
+## Verified (2026-09-25)
+
+* Python: 12/12 tests (incl. live e2e against a real `deltu run` on
+  127.0.0.1:8210 — health, send, status asserted against the engine).
+* TypeScript: 12/12 tests (same live e2e), strict `tsc` build clean,
+  zero runtime dependencies.
+* `.github/workflows/sdk.yml` runs both suites against a live engine
+  started by CI (first true end-to-end coverage of the public contract;
+  repo-wide CI lands with Unit 14).

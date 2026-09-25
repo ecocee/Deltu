@@ -4,15 +4,28 @@ Update this file after every meaningful implementation change.
 
 ## Current Phase
 
-- Unit 13 — SDKs (optional): **NEXT** (pre-drafted spec 13 to be finalized
-  first)
+- Unit 14 — Packaging & Deployment: **NEXT** (pre-drafted spec 14 to be
+  finalized first; final unit)
 
 ## Current Goal
 
-- Finalize `context/specs/13-sdks.md`, then implement the Python and
-  TypeScript client packages with tests.
+- Finalize `context/specs/14-packaging-deployment.md`, then ship the
+  Dockerfile, CI, release build numbers, and deployment docs.
 
 ## Completed
+
+- Unit 13 — SDKs: **COMPLETE** (2026-09-25, per
+  `context/specs/13-sdks.md`, on `feat/09-cli`)
+  - `sdk/python`: `deltu` package — `DeltuClient` (send_events/
+    send_event/health/status), pre-flight `Event` validation mirroring
+    spec 02, typed 400/413/429/503 error classes, opt-in 429/503 retries,
+    `StatusSnapshot`; 12/12 tests incl. live e2e against a real engine.
+  - `sdk/typescript`: `@deltu/client` — same surface, strict tsc (no
+    `any`, `exactOptionalPropertyTypes`), built-in fetch, zero runtime
+    deps; 12/12 tests incl. live e2e.
+  - `.github/workflows/sdk.yml` + `.github/deltu-ci.yaml`: CI starts a
+    live `deltu run` and runs both suites against it (first true e2e of
+    the public contract).
 
 - Unit 12 — Persistence: **COMPLETE** (2026-09-25, per
   `context/specs/12-persistence-adapters.md`, on `feat/09-cli`)

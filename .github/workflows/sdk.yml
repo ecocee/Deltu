@@ -1,0 +1,52 @@
+# SDK end-to-end: both client SDKs' test suites run against a live
+# `deltu run` instance started by this workflow — the first true
+# end-to-end coverage of the public HTTP contract (spec 13).
+name: sdk
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install SDK deps
+        run: pip install pytest httpx
+      - name: Build engine
+        run: cargo build --quiet
+      - name: Start engine
+        run: |
+          target/debug/deltu run --config .github/deltu-ci.yaml &
+          echo $! > /tmp/deltu.pid
+          sleep 2
+      - name: Run Python SDK tests (incl. live e2e)
+        run: python3 -m pytest sdk/python/tests -q
+      - name: Stop engine
+        if: always()
+        run: kill $(cat /tmp/deltu.pid) 2>/dev/null || true
+
+  typescript:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Build engine
+        run: cargo build --quiet
+      - name: Start engine
+        run: |
+          target/debug/deltu run --config .github/deltu-ci.yaml &
+          echo $! > /tmp/deltu.pid
+          sleep 2
+      - name: Run TypeScript SDK tests (incl. live e2e)
+        run: cd sdk/typescript && npm install --no-audit --no-fund && npm test
+      - name: Stop engine
+        if: always()
+        run: kill $(cat /tmp/deltu.pid) 2>/dev/null || true
