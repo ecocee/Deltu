@@ -4,15 +4,37 @@ Update this file after every meaningful implementation change.
 
 ## Current Phase
 
-- Unit 06 — Actions: **NOT STARTED** (pre-drafted spec 06 to be finalized first)
+- Unit 07 — Runtime & HTTP: **NOT STARTED** (pre-drafted spec 07 to be
+  finalized first; retires decision 004)
 
 ## Current Goal
 
-- Finalize `context/specs/06-actions.md` at unit start, then implement the
-  action dispatcher with failure isolation and the log action.
+- Finalize `context/specs/07-runtime-http.md` at unit start, then implement
+  the async runtime, bounded-channel worker, and the documented HTTP API.
 
 ## Completed
 
+- Unit 06 — Actions: **COMPLETE** (2026-09-25, per
+  `context/specs/06-actions.md`, branch `feat/06-actions`)
+  - `ActionDispatcher` with failure isolation (invariant 8): executes every
+    request, collects one `ActionOutcome` per request, never panics or
+    aborts on failure — proven by a deliberately-failing executor test.
+  - Contract: `ActionExecutor` trait (the seam Units 07/08 use for
+    webhook/MQTT executors), `ActionDefinition { id, kind }`,
+    `ActionKind::Log`, `ActionSummary`, `ActionCounters`.
+  - Log action: structured JSON line to stderr, caller-injected timestamp
+    (clock-free), optional `{rule_id}`/`{payload}` template, line returned
+    in the outcome for direct assertion.
+  - Finalized at unit start (documented in spec): executor abstraction,
+    `dispatch(requests, now_ms)` signature, stderr sink + returned line,
+    `ActionRequest` stays defined in Unit 05 (no duplication).
+  - No benchmark (justified deviation per spec: dispatch is
+    log-formatting-bound; revisit with Unit 10 metrics).
+  - Dependencies: none added.
+  - Verification results: `cargo check --all-targets` clean; `cargo build`
+    ok; `cargo test` 108 passed / 0 failed (98 prior + 10 new); `cargo run`
+    → `deltu 0.1.0`; `cargo fmt --check` clean; `cargo clippy
+    --all-targets` 0 warnings.
 - Unit 05 — Rules: **COMPLETE** (2026-09-25, per
   `context/specs/05-rules.md`, branch `feat/05-rules`)
   - Finalized at unit start: Event triggers match either input shape;
@@ -137,9 +159,10 @@ Update this file after every meaningful implementation change.
 
 ## Next Up
 
-- Unit 06 — Actions: finalize the pre-drafted `context/specs/06-actions.md`,
-  then implement and verify. Remaining pre-drafts (06–14) are finalized at
-  their unit start per the workflow (see `context/specs/README.md`).
+- Unit 07 — Runtime & HTTP: finalize the pre-drafted
+  `context/specs/07-runtime-http.md`, then implement and verify. Remaining
+  pre-drafts (08–14) are finalized at their unit start per the workflow
+  (see `context/specs/README.md`).
 
 ## Open Questions
 
@@ -163,9 +186,9 @@ Update this file after every meaningful implementation change.
 
 - Repository layout: `Cargo.toml` (package `deltu` 0.1.0, edition 2024;
   deps: serde, serde_json; dev-dep: criterion), `Cargo.lock`, `src/`
-  (`lib.rs`, `main.rs`, `event/`, `processing/`, `state/`, `rules/`),
-  `benchmarks/{processing,state,rules}.rs`, `target/` (ignored), plus the
-  original `context/` and `AGENT.md`.
+  (`lib.rs`, `main.rs`, `actions/`, `event/`, `processing/`, `rules/`,
+  `state/`), `benchmarks/{processing,state,rules}.rs`, `target/`
+  (ignored), plus the original `context/` and `AGENT.md`.
 - Unit 01 was implemented strictly within spec scope: no dependencies, no
   async runtime (decision 004), no event-engine code. The next unit begins
   with its spec, per the workflow rules.
@@ -176,6 +199,6 @@ Update this file after every meaningful implementation change.
   (`deltu`).
 - Git: Units 00–01 on `feat/01-rust-foundation`; Units 02–03 (and specs
   04–14) on `feat/02-event-model` / `feat/03-processing-core`; Unit 04 on
-  `feat/04-state-engine`; Unit 05 on `feat/05-rules`. Direct pushes from
-  the coding shell lack HTTPS credentials; sync via the client or a
-  credentialed environment.
+  `feat/04-state-engine`; Unit 05 on `feat/05-rules`; Unit 06 on
+  `feat/06-actions`. Direct pushes from the coding shell lack HTTPS
+  credentials; sync via the client or a credentialed environment.

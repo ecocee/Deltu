@@ -13,7 +13,7 @@ their unit on request and must be re-verified and finalized at unit start.
 | [03-processing-core.md](03-processing-core.md) | 03 — Processing Core | COMPLETE |
 | [04-state-engine.md](04-state-engine.md) | 04 — State Engine | COMPLETE |
 | [05-rules.md](05-rules.md) | 05 — Rules | COMPLETE |
-| [06-actions.md](06-actions.md) | 06 — Actions | PRE-DRAFTED |
+| [06-actions.md](06-actions.md) | 06 — Actions | COMPLETE |
 | [07-runtime-http.md](07-runtime-http.md) | 07 — Runtime & HTTP | PRE-DRAFTED |
 | [08-mqtt.md](08-mqtt.md) | 08 — MQTT | PRE-DRAFTED |
 | [09-cli.md](09-cli.md) | 09 — CLI | PRE-DRAFTED |

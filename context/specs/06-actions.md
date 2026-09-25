@@ -1,6 +1,6 @@
 # Spec 06 — Actions
 
-Status: DRAFT (pre-drafted on request; finalize at unit start) · Depends on: Unit 05 (Rules)
+Status: COMPLETE (implemented & verified 2026-09-25; finalized semantics below) · Depends on: Unit 05 (Rules)
 
 ## Goal
 
@@ -87,6 +87,31 @@ units.
 ## Dependencies
 
 None added.
+
+## Finalized at Unit Start (review pass, 2026-09-25)
+
+The pre-draft left four points open; resolved here before implementation:
+
+1. **Executor abstraction:** the dispatcher executes `Box<dyn ActionExecutor>`
+   instances (`execute(&request, now_ms) -> Result<ActionSummary,
+   ActionError>`) built from definitions. The spec's own failure-isolation
+   test requires a "deliberately-failing test action", which is only
+   possible with a pluggable executor — and Units 07/08 add webhook/MQTT
+   executors behind the same seam without changing dispatch semantics.
+2. **Signature refinement:** `dispatch(requests, now_ms)` — the pre-draft
+   required caller-injected timestamps (clock-free) but omitted the
+   parameter. `elapsed_ms` inside outcomes uses a monotonic `Instant`:
+   observability, not a decision input, so the determinism principle is
+   unaffected.
+3. **Log sink:** the structured JSON line goes to **stderr** (the action's
+   purpose; the scope guard's "no I/O" means no network/filesystem) and is
+   also returned in the outcome summary so tests assert shape directly.
+   Optional `template` becomes the line's `message` field with
+   `{rule_id}`/`{payload}` placeholders substituted (plain replacement, no
+   format runtime).
+4. **`ActionRequest` stays defined in Unit 05** (single definition, already
+   crate-exported); the actions module imports it rather than duplicating
+   the type.
 
 ## Verify When Done
 

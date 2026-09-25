@@ -1,9 +1,13 @@
 //! Deltu core engine — foundation boundary.
 
+pub mod actions;
 pub mod event;
 pub mod processing;
 pub mod rules;
 pub mod state;
+
+pub use actions::{ActionConfigError, ActionError, ActionExecutor, ActionSummary, LogLevel};
+pub use actions::{ActionCounters, ActionDefinition, ActionDispatcher, ActionKind, ActionOutcome};
 
 pub use event::{Event, EventError, Payload};
 pub use processing::{
