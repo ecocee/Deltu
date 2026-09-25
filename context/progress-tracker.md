@@ -4,12 +4,13 @@ Update this file after every meaningful implementation change.
 
 ## Current Phase
 
-- Unit 02 — Event Model: **NOT STARTED** (spec to be written first)
+- Unit 02 — Event Model: **IN PROGRESS** (spec written, ready to implement)
 
 ## Current Goal
 
-- Write `context/specs/02-event-model.md`, then implement and verify the
-  validated internal event model.
+- Implement `context/specs/02-event-model.md`: the `event` module (Event,
+  Payload, EventError) with validation, normalization, serde serialization,
+  and full test coverage — then verify the complete checklist.
 
 ## Completed
 
@@ -32,13 +33,18 @@ Update this file after every meaningful implementation change.
 
 ## In Progress
 
-- None.
+- Unit 02 — Event Model (started 2026-09-25)
+  - Spec complete: `context/specs/02-event-model.md` (Event/Payload/EventError,
+    validation rules, canonical JSON shape, serde + serde_json justified per
+    the dependency rule).
+  - Implementation not started; scope guard: no processing/filtering/state/
+    rules code in this unit.
 
 ## Next Up
 
-- Unit 02 — Event Model: write `context/specs/02-event-model.md`
-  (validated, serializable internal event struct per
-  `research/event-processing.md`), then implement and verify it.
+- After Unit 02: write `context/specs/03-processing-core.md` (filter →
+  deduplicate → aggregate → change-detect stages per
+  `research/event-processing.md`).
 
 ## Open Questions
 
@@ -67,5 +73,7 @@ Update this file after every meaningful implementation change.
   async runtime (decision 004), no event-engine code. The next unit begins
   with its spec, per the workflow rules.
 - Git: repository initialized 2026-09-25; branch `feat/01-rust-foundation`
-  holds Units 00–01. Push to GitHub pending a remote (no `gh` CLI and no
-  origin configured in this environment; see commit step notes).
+  holds Units 00–01 as root commit `2f06984`, synced to origin
+  (`https://github.com/ecocee/Deltu.git`). Direct pushes from the coding
+  shell lack HTTPS credentials; sync via the client or a credentialed
+  environment.
