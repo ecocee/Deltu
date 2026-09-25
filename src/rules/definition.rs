@@ -6,6 +6,11 @@
 use serde::{Deserialize, Serialize};
 
 /// What causes a rule to be considered for firing.
+///
+/// Externally tagged (serde default). YAML configs use `!Event` tags; the
+/// JSON API is unaffected. (Internally-tagged representation on this
+/// mutually-recursive enum tree triggers a rustc E0275 overflow in the
+/// derive — see the git history of this file for the attempt.)
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Trigger {
     /// Fires on inputs of one kind family (e.g. `"temperature"` matches
@@ -94,6 +99,7 @@ pub enum Operator {
 
 /// Typed condition tree. `All`/`Any` require at least one child — enforced
 /// at configuration time so a malformed rule cannot silently always-fire.
+/// Externally tagged (serde default); see [`Trigger`] for why.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Condition {
     /// True when every child is true.

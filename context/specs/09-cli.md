@@ -1,6 +1,6 @@
 # Spec 09 — CLI
 
-Status: DRAFT (pre-drafted on request; finalize at unit start) · Depends on: Unit 07 (Runtime & HTTP)
+Status: COMPLETE (implemented & verified 2026-09-25; finalized semantics below) · Depends on: Unit 07 (Runtime & HTTP)
 
 ## Goal
 
@@ -51,6 +51,26 @@ example's historical value. Confirmed by whoever starts this unit.
 ## Dependencies
 
 `clap` (derive). Nothing else.
+
+## Finalized at Unit Start (review pass, 2026-09-25)
+
+1. **Binary name resolved: `deltu`** (was the tracked open question; the
+   spec's recommendation adopted — one name across crate/binary/docs).
+2. **YAML config shape:** `Trigger`/`Condition` stay **externally tagged**
+   (serde default; YAML `!Event`/`!Comparison` tags, scalar wrappers like
+   `!Numeric`). An internally-tagged attempt (`{type: event, ...}`) was
+   made and reverted: on this mutually-recursive enum tree it produces a
+   rustc E0275 overflow in the serde derive that balloons test
+   compilation (the "cargo test takes long" report this unit). Rule
+   enums use PascalCase variants in config (`EventValue`, `Gt`) — no
+   `rename_all` — while `ActionKind` remains internally tagged
+   (`type: log`) because it is not recursive.
+3. **`status`/`health` HTTP client:** zero-dependency hand-rolled
+   HTTP/1.1 GET over `TcpStream` (one blocking call per invocation) — a
+   client crate for two GETs violates the dependency rule. `clap` 4.6 is
+   the only new dependency.
+4. **Exit codes** implemented as specified: 0 success, 1
+   validation/connection failure, 2 usage error (unknown command/flag).
 
 ## Verify When Done
 

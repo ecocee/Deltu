@@ -16,7 +16,7 @@ their unit on request and must be re-verified and finalized at unit start.
 | [06-actions.md](06-actions.md) | 06 — Actions | COMPLETE |
 | [07-runtime-http.md](07-runtime-http.md) | 07 — Runtime & HTTP | COMPLETE |
 | [08-mqtt.md](08-mqtt.md) | 08 — MQTT | COMPLETE |
-| [09-cli.md](09-cli.md) | 09 — CLI | PRE-DRAFTED |
+| [09-cli.md](09-cli.md) | 09 — CLI | COMPLETE |
 | [10-metrics.md](10-metrics.md) | 10 — Metrics | PRE-DRAFTED |
 | [11-local-ai.md](11-local-ai.md) | 11 — Local AI (optional) | PRE-DRAFTED |
 | [12-persistence-adapters.md](12-persistence-adapters.md) | 12 — Persistence adapters (optional) | PRE-DRAFTED |

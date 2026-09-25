@@ -1,6 +1,7 @@
 //! Deltu core engine — foundation boundary.
 
 pub mod actions;
+pub mod cli;
 pub mod event;
 pub mod input;
 pub mod processing;

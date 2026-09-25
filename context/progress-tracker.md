@@ -4,16 +4,32 @@ Update this file after every meaningful implementation change.
 
 ## Current Phase
 
-- Unit 09 — CLI: **NOT STARTED** (pre-drafted spec 09 to be finalized first;
-  resolves the binary-name question)
+- Unit 10 — Metrics: **NOT STARTED** (pre-drafted spec 10 to be finalized first)
 
 ## Current Goal
 
-- Finalize `context/specs/09-cli.md` at unit start, then implement the full
-  command surface (run/check/status/health/version).
+- Finalize `context/specs/10-metrics.md` at unit start, then implement the
+  metrics registry, extended /v1/status, and the first measured baseline.
 
 ## Completed
 
+- Unit 09 — CLI: **COMPLETE** (2026-09-25, per
+  `context/specs/09-cli.md`, branch `feat/09-cli`)
+  - Binary name resolved: `deltu` (open question closed).
+  - `deltu run [--config]` / `check` / `status [--url]` / `health [--url]` /
+    `--version` via clap 4.6 (derive); exit codes 0/1/2 implemented and
+    tested; `status`/`health` are thin documented-API clients (zero-dep
+    hand-rolled HTTP/1.1 GET — no client crate, dependency rule).
+  - Incident & fix: an internally-tagged serde representation attempted on
+    the recursive `Trigger`/`Condition` enums caused rustc E0275 derive
+    overflow and the reported `cargo test` slowdown; reverted to external
+    tagging (YAML `!Tag` syntax), compile time back to ~2s. Documented in
+    spec 09.
+  - Dependencies: clap only (existing HTTP/serde stack reused).
+  - Verification results: `cargo check --all-targets` clean; `cargo build`
+    ok; `cargo test` 140 passed / 0 failed (135 prior + 5 new); `cargo fmt
+    --check` clean; `cargo clippy --all-targets` 0 warnings; live CLI:
+    check→0, health→healthy/0, status→JSON/0, SIGTERM clean.
 - Unit 08 — MQTT: **COMPLETE** (2026-09-25, per
   `context/specs/08-mqtt.md`, branch `feat/08-mqtt`)
   - Open question resolved: MQTT protocol version is a config enum
@@ -208,15 +224,15 @@ Update this file after every meaningful implementation change.
 
 ## Next Up
 
-- Unit 09 — CLI: finalize the pre-drafted `context/specs/09-cli.md`,
-  then implement and verify. Remaining pre-drafts (10–14) are finalized
-  at their unit start per the workflow (see `context/specs/README.md`).
+- Unit 10 — Metrics: finalize the pre-drafted `context/specs/10-metrics.md`,
+  then implement and verify. Remaining pre-drafts (11–14) are finalized at
+  their unit start per the workflow (see `context/specs/README.md`).
 
 ## Open Questions
 
-- CLI binary name: architecture and build-plan examples use `plan-c` while the
-  project is named Deltu. The final binary name must be confirmed before the CLI
-  unit (Unit 09). Does not block earlier units.
+- CLI binary name: RESOLVED in Unit 09 — shipped as `deltu` (crate, binary,
+  and docs share one name; the `plan-c` examples in older docs are
+  historical).
 - MQTT protocol version default: RESOLVED in Unit 08 — `Transport` config
   enum (Mqtt5 default, Mqtt31 for older brokers); divergence point in place.
 
@@ -233,11 +249,11 @@ Update this file after every meaningful implementation change.
 ## Session Notes
 
 - Repository layout: `Cargo.toml` (package `deltu` 0.1.0, edition 2024;
-  deps: serde, serde_json, tokio, axum, serde_yaml, rumqttc; dev-deps:
-  criterion, tower), `Cargo.lock`, `src/` (`lib.rs`, `main.rs`, `actions/`,
-  `event/`, `input/`, `processing/`, `rules/`, `runtime/`, `state/`),
-  `benchmarks/{processing,state,rules}.rs`, `target/` (ignored), plus the
-  original `context/` and `AGENT.md`.
+  deps: serde, serde_json, tokio, axum, serde_yaml, rumqttc, clap;
+  dev-deps: criterion, tower), `Cargo.lock`, `src/` (`lib.rs`, `main.rs`,
+  `cli.rs`, `actions/`, `event/`, `input/`, `processing/`, `rules/`,
+  `runtime/`, `state/`), `benchmarks/{processing,state,rules}.rs`,
+  `target/` (ignored), plus the original `context/` and `AGENT.md`.
 - Unit 01 was implemented strictly within spec scope: no dependencies, no
   async runtime (decision 004), no event-engine code. The next unit begins
   with its spec, per the workflow rules.
@@ -250,5 +266,6 @@ Update this file after every meaningful implementation change.
   04–14) on `feat/02-event-model` / `feat/03-processing-core`; Unit 04 on
   `feat/04-state-engine`; Unit 05 on `feat/05-rules`; Unit 06 on
   `feat/06-actions`; Unit 07 on `feat/07-runtime-http`; Unit 08 on
-  `feat/08-mqtt`. Direct pushes from the coding shell lack HTTPS
-  credentials; sync via the client or a credentialed environment.
+  `feat/08-mqtt`; Unit 09 on `feat/09-cli`. Direct pushes from the coding
+  shell lack HTTPS credentials; sync via the client or a credentialed
+  environment.
