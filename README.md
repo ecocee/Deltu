@@ -1,4 +1,4 @@
-![Deltu](assets/Deltu.png)
+![Deltu](assets/banner.png)
 **A small, self-hostable event-processing engine in Rust.** Sensors and
 devices stream events in over HTTP or MQTT; Deltu filters, deduplicates,
 aggregates, and detects changes — bounded memory, no unbounded growth —
