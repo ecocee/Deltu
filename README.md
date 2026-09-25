@@ -10,6 +10,8 @@ Built unit-by-unit against a 14-unit plan (`context/build-plan.md`);
 every unit carries its spec, verification results, and commit history
 (`context/specs/`, `context/progress-tracker.md`).
 
+![Deltu](assets/Deltu.png)
+
 ## Why Deltu
 
 - **Bounded by construction** — every cache, window, and state store has
