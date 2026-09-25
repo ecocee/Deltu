@@ -43,13 +43,9 @@ impl KindFilter {
             None => true,
             Some(entries) => {
                 let kind = kind.to_lowercase();
-                entries.iter().any(|entry| {
-                    kind == *entry
-                        || (kind.len() > entry.len() && {
-                            // Match `entry + "."` without allocating a joined string.
-                            kind.starts_with(entry) && kind.as_bytes()[entry.len()] == b'.'
-                        })
-                })
+                entries
+                    .iter()
+                    .any(|entry| super::kind_matches_family(&kind, entry))
             }
         }
     }

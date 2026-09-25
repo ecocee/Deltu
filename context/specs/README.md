@@ -11,8 +11,8 @@ their unit on request and must be re-verified and finalized at unit start.
 | [01-rust-foundation.md](01-rust-foundation.md) | 01 — Rust Foundation | COMPLETE |
 | [02-event-model.md](02-event-model.md) | 02 — Event Model | COMPLETE |
 | [03-processing-core.md](03-processing-core.md) | 03 — Processing Core | COMPLETE |
-| [04-state-engine.md](04-state-engine.md) | 04 — State Engine | Spec complete, ready to implement |
-| [05-rules.md](05-rules.md) | 05 — Rules | PRE-DRAFTED |
+| [04-state-engine.md](04-state-engine.md) | 04 — State Engine | COMPLETE |
+| [05-rules.md](05-rules.md) | 05 — Rules | COMPLETE |
 | [06-actions.md](06-actions.md) | 06 — Actions | PRE-DRAFTED |
 | [07-runtime-http.md](07-runtime-http.md) | 07 — Runtime & HTTP | PRE-DRAFTED |
 | [08-mqtt.md](08-mqtt.md) | 08 — MQTT | PRE-DRAFTED |

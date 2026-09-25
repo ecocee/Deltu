@@ -4,15 +4,38 @@ Update this file after every meaningful implementation change.
 
 ## Current Phase
 
-- Unit 05 — Rules: **NOT STARTED** (pre-drafted spec 05 to be finalized first)
+- Unit 06 — Actions: **NOT STARTED** (pre-drafted spec 06 to be finalized first)
 
 ## Current Goal
 
-- Finalize `context/specs/05-rules.md` at unit start, then implement the
-  deterministic rule engine over pipeline outputs and current state.
+- Finalize `context/specs/06-actions.md` at unit start, then implement the
+  action dispatcher with failure isolation and the log action.
 
 ## Completed
 
+- Unit 05 — Rules: **COMPLETE** (2026-09-25, per
+  `context/specs/05-rules.md`, branch `feat/05-rules`)
+  - Finalized at unit start: Event triggers match either input shape;
+    State triggers fire while their key exists (absence rules → runtime
+    unit); type mismatches compare `false` incl. cross-type `Ne`;
+    ordering ops numeric-only (text/boolean Eq/Ne); suppression state
+    bounded by construction (one slot per rule); `RuleError` collapsed
+    into `RuleConfigError` (evaluation is total).
+  - `RuleEngine::evaluate(EvalInput) -> Vec<ActionRequest>`: triggers
+    (Event family / State key), typed condition trees (All/Any/Not/
+    Comparison/Exists), fields (EventValue/State/Aggregation stat),
+    closed operator set, event-time once-per-window suppression with
+    counter, id-ordered deterministic output, serde-derived definitions.
+  - `kind_matches_family` extracted to `crate::processing` and shared by
+    filter and rule triggers (one implementation, two consumers).
+  - Dependencies: none added (serde/serde_json/criterion reused).
+  - Verification results: `cargo check --all-targets` clean; `cargo build`
+    ok; `cargo test` 98 passed / 0 failed (82 prior + 16 new); `cargo run`
+    → `deltu 0.1.0`; `cargo fmt --check` clean; `cargo clippy --all-targets`
+    0 warnings; `cargo bench --bench rules` ran.
+  - Benchmark (criterion 0.8.2, Apple M5, idle dev machine, bench profile):
+    `rules_evaluate_100` — 5.75 µs per evaluation of 100 mixed-condition
+    rules (~57 ns/rule). Documented starting point for this hardware only.
 - Unit 04 — State Engine: **COMPLETE** (2026-09-25, per
   `context/specs/04-state-engine.md`, branch `feat/04-state-engine`)
   - `StateStore` keyed by `(source, kind)` mirroring the pipeline keying;
@@ -114,10 +137,9 @@ Update this file after every meaningful implementation change.
 
 ## Next Up
 
-- Unit 05 — Rules: finalize the pre-drafted `context/specs/05-rules.md`,
-  then implement and verify. All downstream specs (05–14) exist as
-  pre-drafts (see `context/specs/README.md`); each is finalized at its
-  unit start per the workflow.
+- Unit 06 — Actions: finalize the pre-drafted `context/specs/06-actions.md`,
+  then implement and verify. Remaining pre-drafts (06–14) are finalized at
+  their unit start per the workflow (see `context/specs/README.md`).
 
 ## Open Questions
 
@@ -141,8 +163,8 @@ Update this file after every meaningful implementation change.
 
 - Repository layout: `Cargo.toml` (package `deltu` 0.1.0, edition 2024;
   deps: serde, serde_json; dev-dep: criterion), `Cargo.lock`, `src/`
-  (`lib.rs`, `main.rs`, `event/`, `processing/`, `state/`),
-  `benchmarks/{processing,state}.rs`, `target/` (ignored), plus the
+  (`lib.rs`, `main.rs`, `event/`, `processing/`, `state/`, `rules/`),
+  `benchmarks/{processing,state,rules}.rs`, `target/` (ignored), plus the
   original `context/` and `AGENT.md`.
 - Unit 01 was implemented strictly within spec scope: no dependencies, no
   async runtime (decision 004), no event-engine code. The next unit begins
@@ -154,5 +176,6 @@ Update this file after every meaningful implementation change.
   (`deltu`).
 - Git: Units 00–01 on `feat/01-rust-foundation`; Units 02–03 (and specs
   04–14) on `feat/02-event-model` / `feat/03-processing-core`; Unit 04 on
-  `feat/04-state-engine`. Direct pushes from the coding shell lack HTTPS
-  credentials; sync via the client or a credentialed environment.
+  `feat/04-state-engine`; Unit 05 on `feat/05-rules`. Direct pushes from
+  the coding shell lack HTTPS credentials; sync via the client or a
+  credentialed environment.

@@ -21,3 +21,8 @@ harness = false
 name = "state"
 path = "benchmarks/state.rs"
 harness = false
+
+[[bench]]
+name = "rules"
+path = "benchmarks/rules.rs"
+harness = false

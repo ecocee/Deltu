@@ -1,6 +1,6 @@
 # Spec 05 — Rules
 
-Status: DRAFT (pre-drafted on request; finalize at unit start) · Depends on: Unit 03 (Processing Core), Unit 04 (State Engine)
+Status: COMPLETE (implemented & verified 2026-09-25; finalized semantics below) · Depends on: Unit 03 (Processing Core), Unit 04 (State Engine)
 
 ## Goal
 
@@ -113,6 +113,33 @@ error conventions (Display + `std::error::Error`).
 
 None added. `serde`/`serde_json` reused for definitions; `criterion`
 dev-dependency reused for the benchmark.
+
+## Finalized at Unit Start (review pass, 2026-09-25)
+
+The pre-draft left five points open; resolved here before implementation:
+
+1. **Event triggers match either input shape** — a raw event's `kind` or a
+   summary's `kind` — so `Field::Aggregation` conditions are reachable
+   without a separate summary-only trigger type.
+2. **State triggers are candidates on every input** and fire while their key
+   exists. Absence-based rules ("went offline") need periodic evaluation,
+   which the runtime unit owns — documented non-goal here.
+3. **Type-mismatched comparisons are `false`, including cross-type `Ne`**
+   (a text value is not "not-equal" to a numeric literal — it is
+   incomparable). Ordering operators apply to numerics only; text and
+   booleans support Eq/Ne (locale-sensitive string ordering is out).
+4. **Suppression state is bounded by construction** — one window-index slot
+   per suppressed rule over a fixed rule set — so the FIFO-eviction pattern
+   from Units 03/04 does not apply; a counter tracks suppressions.
+5. **`RuleError` collapsed into `RuleConfigError`** — evaluation is total by
+   design (missing state and type mismatches are `false`, never errors), so
+   a runtime error type would be dead code.
+
+Also: the kind-family matcher was extracted as
+`crate::processing::kind_matches_family` and shared with the filter stage
+(one implementation, two consumers), and crate-root re-exports additionally
+expose `Field`, `Literal`, `Operator`, `Stat`, `Trigger`, `OncePerWindow`,
+and `EvalInput` (needed by benchmarks/tests and later units).
 
 ## Verify When Done
 

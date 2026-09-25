@@ -236,6 +236,17 @@ impl ProcessingPipeline {
     }
 }
 
+/// True when `kind` equals `entry` or belongs to its dotted family
+/// (`entry + "."` prefix) — e.g. `"temperature"` allows
+/// `temperature.reading` but not `temperatures.x`. Shared with the rule
+/// engine's trigger matching (Unit 05).
+pub(crate) fn kind_matches_family(kind: &str, entry: &str) -> bool {
+    kind == entry
+        || (kind.len() > entry.len() && {
+            kind.starts_with(entry) && kind.as_bytes()[entry.len()] == b'.'
+        })
+}
+
 /// Builds a validated [`Event`] for tests and benchmarks.
 pub fn test_event(id: &str, source: &str, kind: &str, timestamp: i64, value: f64) -> Event {
     Event::new(id, source, kind, timestamp, Payload::Numeric { value })
