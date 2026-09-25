@@ -2,6 +2,7 @@
 
 pub mod actions;
 pub mod event;
+pub mod input;
 pub mod processing;
 pub mod rules;
 pub mod runtime;

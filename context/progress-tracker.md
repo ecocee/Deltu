@@ -4,15 +4,38 @@ Update this file after every meaningful implementation change.
 
 ## Current Phase
 
-- Unit 08 — MQTT: **NOT STARTED** (pre-drafted spec 08 to be finalized first)
+- Unit 09 — CLI: **NOT STARTED** (pre-drafted spec 09 to be finalized first;
+  resolves the binary-name question)
 
 ## Current Goal
 
-- Finalize `context/specs/08-mqtt.md` at unit start (resolve the
-  protocol-version question), then implement the MQTT adapter.
+- Finalize `context/specs/09-cli.md` at unit start, then implement the full
+  command surface (run/check/status/health/version).
 
 ## Completed
 
+- Unit 08 — MQTT: **COMPLETE** (2026-09-25, per
+  `context/specs/08-mqtt.md`, branch `feat/08-mqtt`)
+  - Open question resolved: MQTT protocol version is a config enum
+    (`Transport`: Mqtt5 default, Mqtt31) — divergence point in place.
+  - `src/input/mqtt/`: config (broker URL, client id, topics, QoS with
+    closed-enum validation, keep-alive, session expiry), conversion
+    (documented topic→source/kind mapping; raw JSON scalars → scalar
+    payloads, objects → structured; non-JSON rejected and counted,
+    never coerced; adapter-injected timestamps; per-message ids), and the
+    eventloop task (subscriptions at startup, rumqttc internal reconnection
+    with counted reconnects, bounded drop-new delivery into the engine
+    queue — broker failures never propagate, invariant 8).
+  - Config: `mqtt:` section gated by `enabled` (default false — an absent
+    section never connects); MQTT counters surfaced in `/v1/status`.
+  - Dependency added: `rumqttc` 0.25.1 (pure Rust, ARM64-safe per edge
+    research).
+  - Verification results: `cargo check --all-targets` clean; `cargo build`
+    ok; `cargo test` 135 passed / 0 failed (123 prior + 12 new — conversion
+    and URL tests run fully without a broker); `cargo run -- --version`;
+    `cargo fmt --check` clean; `cargo clippy --all-targets` 0 warnings.
+  - Live-broker integration test remains documented-and-optional per spec
+    (no broker in CI); all unit behavior verified broker-free.
 - Unit 07 — Runtime & HTTP: **COMPLETE** (2026-09-25, per
   `context/specs/07-runtime-http.md`, branch `feat/07-runtime-http`)
   - Decision 004 retired: tokio 1.53.1 + axum 0.8.9 + serde_yaml 0.9.34 +
@@ -185,8 +208,8 @@ Update this file after every meaningful implementation change.
 
 ## Next Up
 
-- Unit 08 — MQTT: finalize the pre-drafted `context/specs/08-mqtt.md`,
-  then implement and verify. Remaining pre-drafts (09–14) are finalized
+- Unit 09 — CLI: finalize the pre-drafted `context/specs/09-cli.md`,
+  then implement and verify. Remaining pre-drafts (10–14) are finalized
   at their unit start per the workflow (see `context/specs/README.md`).
 
 ## Open Questions
@@ -194,8 +217,8 @@ Update this file after every meaningful implementation change.
 - CLI binary name: architecture and build-plan examples use `plan-c` while the
   project is named Deltu. The final binary name must be confirmed before the CLI
   unit (Unit 09). Does not block earlier units.
-- MQTT protocol version default for the first MQTT unit: 3.1.1 vs 5.0 (research
-  suggests 5.0-capable client with a configured default; decide in that unit's spec).
+- MQTT protocol version default: RESOLVED in Unit 08 — `Transport` config
+  enum (Mqtt5 default, Mqtt31 for older brokers); divergence point in place.
 
 ## Architecture Decisions
 
@@ -210,9 +233,9 @@ Update this file after every meaningful implementation change.
 ## Session Notes
 
 - Repository layout: `Cargo.toml` (package `deltu` 0.1.0, edition 2024;
-  deps: serde, serde_json, tokio, axum, serde_yaml; dev-deps: criterion,
-  tower), `Cargo.lock`, `src/` (`lib.rs`, `main.rs`, `actions/`, `event/`,
-  `processing/`, `rules/`, `runtime/`, `state/`),
+  deps: serde, serde_json, tokio, axum, serde_yaml, rumqttc; dev-deps:
+  criterion, tower), `Cargo.lock`, `src/` (`lib.rs`, `main.rs`, `actions/`,
+  `event/`, `input/`, `processing/`, `rules/`, `runtime/`, `state/`),
   `benchmarks/{processing,state,rules}.rs`, `target/` (ignored), plus the
   original `context/` and `AGENT.md`.
 - Unit 01 was implemented strictly within spec scope: no dependencies, no
@@ -226,6 +249,6 @@ Update this file after every meaningful implementation change.
 - Git: Units 00–01 on `feat/01-rust-foundation`; Units 02–03 (and specs
   04–14) on `feat/02-event-model` / `feat/03-processing-core`; Unit 04 on
   `feat/04-state-engine`; Unit 05 on `feat/05-rules`; Unit 06 on
-  `feat/06-actions`; Unit 07 on `feat/07-runtime-http`. Direct pushes
-  from the coding shell lack HTTPS credentials; sync via the client or a
-  credentialed environment.
+  `feat/06-actions`; Unit 07 on `feat/07-runtime-http`; Unit 08 on
+  `feat/08-mqtt`. Direct pushes from the coding shell lack HTTPS
+  credentials; sync via the client or a credentialed environment.

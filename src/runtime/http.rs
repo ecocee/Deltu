@@ -21,7 +21,7 @@ use crate::state::StateStore;
 /// A batch submitted through the API, paired with a reply channel for the
 /// worker's results (bounded backpressure: the handler waits for the
 /// worker's receipt; when the queue is full the handler returns 429).
-pub(crate) struct WorkItem {
+pub struct WorkItem {
     pub events: Vec<Event>,
     pub reply: oneshot::Sender<CoreOutcome>,
 }
@@ -173,6 +173,7 @@ pub(crate) async fn get_status(State(app): State<AppState>) -> Json<JsonValue> {
     // Single lock acquisition: queue depth comes from the same guard
     // (std Mutex is not reentrant — a second lock would self-deadlock).
     let snapshot = {
+        let mqtt = app.mqtt_counters.snapshot();
         let core = app.core.lock().expect("worker poisoned");
         json!({
             "version": crate::version(),
@@ -190,6 +191,12 @@ pub(crate) async fn get_status(State(app): State<AppState>) -> Json<JsonValue> {
                 "entries": core.state_entries(),
                 "expired": core.state_counters().expired,
                 "evicted": core.state_counters().evicted,
+            },
+            "mqtt": {
+                "messages_received": mqtt.messages_received,
+                "messages_rejected": mqtt.messages_rejected,
+                "messages_dropped": mqtt.messages_dropped,
+                "reconnects": mqtt.reconnects,
             },
             "actions": {
                 "attempted": core.action_counters().actions_attempted,
@@ -213,6 +220,8 @@ pub(crate) struct AppState {
     /// Queue capacity (mirrors the channel bound; surfaced for tests).
     #[allow(dead_code)]
     pub queue_capacity: usize,
+    /// MQTT adapter counters (zeroed when the adapter is disabled).
+    pub mqtt_counters: Arc<crate::input::mqtt::SharedMqttCounters>,
     /// Process start for uptime.
     pub started: Arc<std::time::Instant>,
     /// Maximum events per batch (from config).
@@ -252,6 +261,7 @@ pub async fn serve(config: RuntimeConfig) -> Result<(), String> {
         state,
         rules,
         actions,
+        mqtt,
         queue_capacity,
     } = config;
 
@@ -294,10 +304,24 @@ pub async fn serve(config: RuntimeConfig) -> Result<(), String> {
         }
     });
 
+    // MQTT adapter (optional; failures never propagate — invariant 8).
+    let mqtt_counters = Arc::new(crate::input::mqtt::SharedMqttCounters::new());
+    if mqtt.enabled {
+        let handle = crate::input::mqtt::spawn(
+            mqtt.mqtt,
+            mqtt_counters.clone(),
+            (*queue).clone(),
+            queue_capacity,
+        )?;
+        // The adapter task runs for the process lifetime; detached here.
+        drop(handle);
+    }
+
     let app_state = AppState {
         core: core.clone(),
         queue,
         queue_capacity,
+        mqtt_counters,
         started: Arc::new(std::time::Instant::now()),
         max_batch: http.max_batch,
     };

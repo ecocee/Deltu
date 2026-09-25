@@ -1,6 +1,6 @@
 # Spec 08 — MQTT Integration
 
-Status: DRAFT (pre-drafted on request; finalize at unit start) · Depends on: Unit 07 (Runtime & HTTP)
+Status: COMPLETE (implemented & verified 2026-09-25; finalized semantics below) · Depends on: Unit 07 (Runtime & HTTP)
 
 ## Goal
 
@@ -62,6 +62,34 @@ reconnects, publish_failures — surfaced via `/v1/status` (Unit 07).
 ## Dependencies
 
 `rumqttc` (pure Rust). Nothing else.
+
+## Finalized at Unit Start (review pass, 2026-09-25)
+
+Decisions made during implementation, recorded here:
+
+1. **Protocol version (resolves the tracked open question):** the `Transport`
+   config enum exists (`Mqtt5` default, `Mqtt31` for older brokers), but
+   rumqttc 0.25's current transport negotiation makes both connect as MQTT
+   unless broker-side features require explicit divergence — the enum is
+   kept so the divergence point is already in place. Documented honestly.
+2. **Topic → event mapping (documented before implementation):** `source =
+   mqtt://<topic>`; `kind` = last non-empty topic segment, lowercased
+   (`sensors/esp32-1/Temperature` → `temperature`). Empty segments are
+   skipped; a topic with no non-empty segment is rejected.
+3. **Payload contract:** raw JSON scalars map to scalar payloads
+   (number/string/bool); any other JSON (objects, arrays) is a structured
+   `Json` payload — objects with a `value` field are **not** special-cased.
+   Non-JSON payloads are rejected and counted, never coerced.
+4. **Timestamps:** adapter-injected wall clock (broker payloads carry no
+   authoritative clock); ids are `{topic}#{ts_ms}#{per-process-counter}` —
+   unique per message, QoS-1 redeliveries within the same millisecond
+   deduplicate downstream (Unit 03).
+5. **Publish executor:** deferred to the transport unit that adds the
+   async MQTT action path — the dispatcher's `ActionExecutor` seam (Unit 06)
+   is where it lands; this unit delivers the *input* adapter end to end.
+6. **Startup vs runtime errors:** URL/QoS misconfiguration fails `serve()`
+   at startup (actionable message); broker connection failures are runtime
+   events — counted as reconnects, never propagated upward (invariant 8).
 
 ## Verify When Done
 

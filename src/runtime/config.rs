@@ -5,6 +5,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::actions::{ActionConfigError, ActionDefinition};
+use crate::input::mqtt::MqttConfig;
 use crate::processing::PipelineConfig;
 use crate::state::StateConfig;
 
@@ -27,9 +28,25 @@ pub struct RuntimeConfig {
     /// Action definitions.
     #[serde(default)]
     pub actions: Vec<ActionDefinition>,
+    /// MQTT adapter settings (disabled when `enabled` is false).
+    #[serde(default)]
+    pub mqtt: MqttSection,
     /// Bounded work-queue depth between HTTP handlers and the worker.
     #[serde(default = "default_queue_capacity")]
     pub queue_capacity: usize,
+}
+
+/// MQTT section: `enabled` gates the adapter (an unconfigured MQTT
+/// section must not attempt connections).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct MqttSection {
+    /// Start the MQTT adapter. Default false.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Adapter settings (broker, topics, QoS).
+    #[serde(flatten)]
+    pub mqtt: MqttConfig,
 }
 
 fn default_queue_capacity() -> usize {
@@ -44,6 +61,7 @@ impl Default for RuntimeConfig {
             state: StateConfig::default(),
             rules: Vec::new(),
             actions: Vec::new(),
+            mqtt: MqttSection::default(),
             queue_capacity: default_queue_capacity(),
         }
     }
