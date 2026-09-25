@@ -1,6 +1,6 @@
 # Spec 02 — Event Model
 
-Status: DRAFT (ready to implement) · Depends on: Unit 01 (Rust Foundation)
+Status: COMPLETE (implemented & verified 2026-09-25; serde struct-variant refinement noted below) · Depends on: Unit 01 (Rust Foundation)
 
 ## Goal
 
@@ -39,12 +39,20 @@ pub struct Event {
 }
 
 pub enum Payload {
-    Numeric(f64),          // NaN / Infinity rejected — they break deterministic rule comparison
-    Text(String),          // non-empty after trim
-    Boolean(bool),
-    Json(serde_json::Value), // escape hatch for structured payloads; must be valid JSON by construction
+    Numeric { value: f64 },  // NaN / Infinity rejected — they break deterministic rule comparison
+    Text { value: String },  // non-empty after trim
+    Boolean { value: bool },
+    Json { value: serde_json::Value }, // escape hatch for structured payloads; must be valid JSON by construction
 }
 ```
+
+Note (refined during implementation): `Payload` variants are **struct**
+variants, not newtype variants. serde's internally tagged representation
+cannot serialize newtype variants of primitive types (it fails with
+`cannot serialize tagged newtype variant ... containing a float`), so
+`Numeric(f64)` is unrepresentable with derived serde traits. The struct-variant
+form produces exactly the documented JSON below; the JSON contract — not the
+Rust variant syntax — is the durable public contract.
 
 Design rationale (recorded so later units don't relitigate it):
 

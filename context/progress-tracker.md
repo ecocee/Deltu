@@ -4,19 +4,38 @@ Update this file after every meaningful implementation change.
 
 ## Current Phase
 
-- Unit 02 — Event Model: **IN PROGRESS** (spec written, ready to implement)
+- Unit 03 — Processing Core: **NOT STARTED** (spec to be written first)
 
 ## Current Goal
 
-- Implement `context/specs/02-event-model.md`: the `event` module (Event,
-  Payload, EventError) with validation, normalization, serde serialization,
-  and full test coverage — then verify the complete checklist.
+- Write `context/specs/03-processing-core.md` (filter → deduplicate →
+  aggregate → change-detect stages per `research/event-processing.md`),
+  then implement and verify the pipeline stages.
 
 ## Completed
 
 - Unit 00 — Planning, Research & Context: **COMPLETE** (2026-09-25)
   - Context knowledge base, research collection, decision records 001–004,
     and specs 00/01 reviewed and in use by the implemented Unit 01.
+- Unit 02 — Event Model: **COMPLETE** (2026-09-25, per
+  `context/specs/02-event-model.md`, branch `feat/02-event-model`)
+  - `event` module (`mod.rs`, `payload.rs`, `error.rs`): `Event`, closed
+    `Payload` enum, `EventError` with actionable Display messages;
+    re-exported at the crate root.
+  - Validation/normalization per spec: trimmed non-empty id/source/kind,
+    lowercased kind, positive epoch-millis timestamp, finite numerics,
+    non-empty text; `Event::new` and the adapter path
+    (deserialize → `validate` → pipeline) both covered.
+  - Dependencies added: `serde` 1.0.229 (derive) + `serde_json` 1.0.151,
+    the two justified in the spec; pinned in `Cargo.lock`.
+  - Spec refined during implementation: `Payload` uses **struct** variants
+    (`Numeric { value: f64 }`) because serde's internally tagged
+    representation cannot serialize primitive newtype variants; the
+    documented JSON contract is unchanged.
+  - Verification results: `cargo check` clean; `cargo build` ok;
+    `cargo test` 24 passed / 0 failed (foundation test still green);
+    `cargo run` → `deltu 0.1.0`; `cargo fmt --check` clean;
+    `cargo clippy` 0 warnings. All spec checklist items pass.
 - Unit 01 — Rust Foundation: **COMPLETE** (2026-09-25, per
   `context/specs/01-rust-foundation.md`)
   - `cargo init --name deltu` at repository root; edition 2024; zero
@@ -33,18 +52,13 @@ Update this file after every meaningful implementation change.
 
 ## In Progress
 
-- Unit 02 — Event Model (started 2026-09-25)
-  - Spec complete: `context/specs/02-event-model.md` (Event/Payload/EventError,
-    validation rules, canonical JSON shape, serde + serde_json justified per
-    the dependency rule).
-  - Implementation not started; scope guard: no processing/filtering/state/
-    rules code in this unit.
+- None.
 
 ## Next Up
 
-- After Unit 02: write `context/specs/03-processing-core.md` (filter →
-  deduplicate → aggregate → change-detect stages per
-  `research/event-processing.md`).
+- Unit 03 — Processing Core: write `context/specs/03-processing-core.md`
+  (filter → deduplicate → aggregate → change-detect stages per
+  `research/event-processing.md`), then implement and verify it.
 
 ## Open Questions
 
@@ -72,8 +86,7 @@ Update this file after every meaningful implementation change.
 - Unit 01 was implemented strictly within spec scope: no dependencies, no
   async runtime (decision 004), no event-engine code. The next unit begins
   with its spec, per the workflow rules.
-- Git: repository initialized 2026-09-25; branch `feat/01-rust-foundation`
-  holds Units 00–01 as root commit `2f06984`, synced to origin
-  (`https://github.com/ecocee/Deltu.git`). Direct pushes from the coding
-  shell lack HTTPS credentials; sync via the client or a credentialed
-  environment.
+- Git: `feat/01-rust-foundation` holds Units 00–01 (commits `2f06984`,
+  `277aac3`) and is synced to origin; Unit 02 lives on
+  `feat/02-event-model`. Direct pushes from the coding shell lack HTTPS
+  credentials; sync via the client or a credentialed environment.
