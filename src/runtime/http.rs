@@ -212,6 +212,13 @@ pub(crate) async fn get_status(State(app): State<AppState>) -> Json<JsonValue> {
                 "attempted": core.action_counters().actions_attempted,
                 "succeeded": core.action_counters().actions_succeeded,
                 "failed": core.action_counters().actions_failed,
+                "ai": {
+                    "calls": core.ai_usage().calls,
+                    "succeeded": core.ai_usage().calls_succeeded,
+                    "failed": core.ai_usage().calls_failed,
+                    "tokens_used": core.ai_usage().tokens_used,
+                    "latency_ms": core.ai_usage().latency_ms,
+                },
             },
         })
     };

@@ -138,6 +138,11 @@ impl EngineCore {
         *self.actions.counters()
     }
 
+    /// AI usage snapshot (zeroed when no provider is configured).
+    pub fn ai_usage(&self) -> crate::ai::AiUsage {
+        self.actions.ai_usage()
+    }
+
     /// Number of entries currently in state.
     pub fn state_entries(&self) -> usize {
         self.state.len()

@@ -38,9 +38,12 @@ pub struct ActionSummary {
     pub detail: String,
 }
 
-/// The behavior of a configured action. Network transports are defined
-/// here but become executable in Units 07/08 (documented build-order
-/// refinement: no HTTP client crate before the async runtime exists).
+/// The behavior of a configured action.
+///
+/// The `Ai` variant (spec 11) routes the rule-produced request through the
+/// `AiManager` — the only path by which any AI provider is reachable
+/// (invocation policy enforced by construction). Without a configured
+/// provider, `Ai` requests fail fast as counted outcomes.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ActionKind {
@@ -52,6 +55,8 @@ pub enum ActionKind {
         /// placeholders.
         template: Option<String>,
     },
+    /// Sends the rule snapshot to the configured AI provider.
+    Ai,
 }
 
 /// A configured action: its id plus its behavior.
@@ -94,6 +99,24 @@ pub struct ActionCounters {
 pub struct ActionDispatcher {
     executors: Vec<(String, Box<dyn ActionExecutor>)>,
     counters: ActionCounters,
+    /// The optional AI layer, reachable only through `ActionKind::Ai`
+    /// executions (spec 11 invocation policy).
+    ai: crate::ai::AiManager,
+    /// Action ids whose kind is `Ai` (fixed at construction).
+    ai_actions: std::collections::HashSet<String>,
+}
+
+impl ActionDispatcher {
+    /// Replaces the AI layer (used by the runtime when configuration
+    /// enables a provider).
+    pub fn set_ai_manager(&mut self, ai: crate::ai::AiManager) {
+        self.ai = ai;
+    }
+
+    /// Read-only AI usage snapshot for `/v1/status`.
+    pub fn ai_usage(&self) -> crate::ai::AiUsage {
+        *self.ai.usage()
+    }
 }
 
 impl ActionDispatcher {
@@ -101,6 +124,12 @@ impl ActionDispatcher {
     pub fn new(definitions: Vec<ActionDefinition>) -> Result<Self, ActionConfigError> {
         let mut executors: Vec<(String, Box<dyn ActionExecutor>)> =
             Vec::with_capacity(definitions.len());
+
+        let ai_actions: std::collections::HashSet<String> = definitions
+            .iter()
+            .filter(|definition| matches!(definition.kind, ActionKind::Ai))
+            .map(|definition| definition.id.trim().to_string())
+            .collect();
 
         for definition in definitions {
             let id = definition.id.trim().to_string();
@@ -113,6 +142,10 @@ impl ActionDispatcher {
 
             let executor: Box<dyn ActionExecutor> = match definition.kind {
                 ActionKind::Log { level, template } => Box::new(LogExecutor { level, template }),
+                // AI executions route through the AI manager at dispatch
+                // time (spec 11 policy: the manager is the only provider
+                // path).
+                ActionKind::Ai => Box::new(AiExecutor),
             };
             executors.push((id, executor));
         }
@@ -120,6 +153,8 @@ impl ActionDispatcher {
         Ok(Self {
             executors,
             counters: ActionCounters::default(),
+            ai: crate::ai::AiManager::disabled(),
+            ai_actions,
         })
     }
 
@@ -132,9 +167,26 @@ impl ActionDispatcher {
             self.counters.actions_attempted += 1;
             let started = Instant::now();
 
-            let result = match self.executor_for(&request.action) {
-                Some(executor) => executor.execute(request, now_ms),
-                None => Err(ActionError::UnknownAction(request.action.clone())),
+            // Spec 11 invocation policy: `ActionKind::Ai` routes through
+            // the AI manager — the only path by which any provider is
+            // reachable. Its outcome converts to an honest action outcome.
+            let is_ai = self.ai_actions.contains(&request.action);
+            let result = if is_ai {
+                let ai_request = crate::ai::request_from_action(request, now_ms);
+                match self.ai.handle(&ai_request) {
+                    crate::ai::AiOutcome::Completed(result) => Ok(ActionSummary {
+                        detail: result.output.to_string(),
+                    }),
+                    crate::ai::AiOutcome::Failed(error) => Err(ActionError::ExecutionFailed {
+                        action_id: request.action.clone(),
+                        reason: error.to_string(),
+                    }),
+                }
+            } else {
+                match self.executor_for(&request.action) {
+                    Some(executor) => executor.execute(request, now_ms),
+                    None => Err(ActionError::UnknownAction(request.action.clone())),
+                }
             };
 
             match &result {
@@ -162,6 +214,26 @@ impl ActionDispatcher {
             .iter_mut()
             .find(|(id, _)| id == action_id)
             .map(|(_, executor)| executor)
+    }
+}
+
+/// Marker executor for `ActionKind::Ai`; dispatch routes these requests
+/// through the AI manager (the policy boundary).
+#[derive(Debug)]
+struct AiExecutor;
+
+impl ActionExecutor for AiExecutor {
+    fn execute(
+        &mut self,
+        _request: &ActionRequest,
+        _now_ms: i64,
+    ) -> Result<ActionSummary, ActionError> {
+        // Placeholder: real handling happens in dispatch (see below),
+        // which consults the AI manager. This arm exists so definition
+        // parsing is total.
+        Ok(ActionSummary {
+            detail: "ai action handled by the dispatcher".to_string(),
+        })
     }
 }
 
@@ -257,6 +329,8 @@ mod tests {
         let mut dispatcher = ActionDispatcher {
             executors: vec![("will-fail".to_string(), Box::new(FailingExecutor))],
             counters: ActionCounters::default(),
+            ai: crate::ai::AiManager::disabled(),
+            ai_actions: std::collections::HashSet::new(),
         };
 
         let outcomes = dispatcher.dispatch(&[request("hot-room", "will-fail")], 1_000);
@@ -285,6 +359,8 @@ mod tests {
                 ("will-fail".to_string(), Box::new(FailingExecutor)),
             ],
             counters: ActionCounters::default(),
+            ai: crate::ai::AiManager::disabled(),
+            ai_actions: std::collections::HashSet::new(),
         };
 
         let requests = vec![
@@ -342,5 +418,59 @@ mod tests {
     fn duplicate_action_ids_are_rejected() {
         let err = ActionDispatcher::new(vec![log_def("dup"), log_def("dup")]).unwrap_err();
         assert_eq!(err, ActionConfigError::DuplicateActionId("dup".to_string()));
+    }
+
+    // --- AI policy (spec 11) ---
+
+    fn ai_def(id: &str) -> ActionDefinition {
+        ActionDefinition {
+            id: id.to_string(),
+            kind: ActionKind::Ai,
+        }
+    }
+
+    #[test]
+    fn ai_action_routes_through_manager_and_counts_usage() {
+        let mut dispatcher = ActionDispatcher::new(vec![ai_def("ai-triage")]).unwrap();
+        dispatcher.set_ai_manager(crate::ai::AiManager::with_provider(Box::new(
+            crate::ai::ScriptedProvider::new(
+                "test-model",
+                vec![Ok((json!({ "triage": "critical" }), 42))],
+            ),
+        )));
+
+        let outcomes = dispatcher.dispatch(&[request("hot-room", "ai-triage")], 1_000);
+        assert!(outcomes[0].result.is_ok());
+        let summary = outcomes[0].result.as_ref().unwrap();
+        assert!(summary.detail.contains("critical"));
+
+        let usage = dispatcher.ai_usage();
+        assert_eq!(usage.calls, 1);
+        assert_eq!(usage.calls_succeeded, 1);
+        assert_eq!(usage.tokens_used, 42);
+    }
+
+    #[test]
+    fn ai_action_without_provider_fails_fast_as_counted_outcome() {
+        let mut dispatcher = ActionDispatcher::new(vec![ai_def("ai-triage")]).unwrap();
+
+        let outcomes = dispatcher.dispatch(&[request("hot-room", "ai-triage")], 1_000);
+        assert!(outcomes[0].result.is_err());
+        assert_eq!(dispatcher.ai_usage().calls, 1);
+        assert_eq!(dispatcher.ai_usage().calls_failed, 1);
+    }
+
+    #[test]
+    fn policy_ai_manager_is_unreachable_without_an_ai_action() {
+        // A log action must never touch the AI manager even when one is
+        // configured — the provider path exists only for `ActionKind::Ai`.
+        let mut dispatcher = ActionDispatcher::new(vec![log_def("log-ops")]).unwrap();
+        dispatcher.set_ai_manager(crate::ai::AiManager::with_provider(Box::new(
+            crate::ai::ScriptedProvider::new("test-model", vec![]),
+        )));
+
+        let outcomes = dispatcher.dispatch(&[request("r", "log-ops")], 1_000);
+        assert!(outcomes[0].result.is_ok());
+        assert_eq!(dispatcher.ai_usage().calls, 0); // untouched
     }
 }
