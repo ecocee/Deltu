@@ -1,5 +1,4 @@
-# Deltu
-
+![Deltu](assets/Deltu.png)
 **A small, self-hostable event-processing engine in Rust.** Sensors and
 devices stream events in over HTTP or MQTT; Deltu filters, deduplicates,
 aggregates, and detects changes — bounded memory, no unbounded growth —
@@ -9,8 +8,6 @@ a single binary, on a Raspberry Pi or a server, and never phones home.
 Built unit-by-unit against a 14-unit plan (`context/build-plan.md`);
 every unit carries its spec, verification results, and commit history
 (`context/specs/`, `context/progress-tracker.md`).
-
-![Deltu](assets/Deltu.png)
 
 ## Why Deltu
 
