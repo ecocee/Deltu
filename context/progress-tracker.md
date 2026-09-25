@@ -4,15 +4,34 @@ Update this file after every meaningful implementation change.
 
 ## Current Phase
 
-- Unit 10 — Metrics: **NOT STARTED** (pre-drafted spec 10 to be finalized first)
+- Unit 11 — Local AI (optional): **NOT STARTED** (pre-drafted spec 11 to be
+  finalized first; engine runs fully without it)
 
 ## Current Goal
 
-- Finalize `context/specs/10-metrics.md` at unit start, then implement the
-  metrics registry, extended /v1/status, and the first measured baseline.
+- Finalize `context/specs/11-local-ai.md`, then implement the AI provider
+  abstraction with the invocation policy and usage metrics.
 
 ## Completed
 
+- Unit 10 — Metrics: **COMPLETE** (2026-09-25, per
+  `context/specs/10-metrics.md`, on `feat/09-cli` — units 10–14 proceed
+  without new branches per user instruction)
+  - `MetricsRegistry` (src/metrics.rs): fixed-field registry;
+    `ThroughputWindow` (sliding 60s, per-second buckets, evicting,
+    non-decaying total); `LatencyRing` ×3 (batch/pipeline/action),
+    capacity 1024, overwrite-oldest, nearest-rank percentiles, empty = 0.
+  - `/v1/status` now includes the documented `metrics` block
+    (events_per_sec, events_total, latency_ms per stage with avg/p95/p99).
+  - No new dependencies.
+  - Verification results: `cargo test` 146 passed / 0 failed (140 prior +
+    6 new: percentile math, ring bounds, window eviction, snapshot shape);
+    check/build/fmt/clippy all clean.
+  - Baseline (docs/baseline.rs driver, 300 batches × 50 events, dev build,
+    Apple M5, loopback, idle machine): **76,905 events/s, 0 failures,
+    latency avg 0.1 ms, P95 1 ms, P99 1 ms, max 2 ms**; engine stayed
+    responsive and shut down cleanly. Documented starting point for this
+    hardware only.
 - Unit 09 — CLI: **COMPLETE** (2026-09-25, per
   `context/specs/09-cli.md`, branch `feat/09-cli`)
   - Binary name resolved: `deltu` (open question closed).
@@ -224,9 +243,8 @@ Update this file after every meaningful implementation change.
 
 ## Next Up
 
-- Unit 10 — Metrics: finalize the pre-drafted `context/specs/10-metrics.md`,
-  then implement and verify. Remaining pre-drafts (11–14) are finalized at
-  their unit start per the workflow (see `context/specs/README.md`).
+- Unit 11 — Local AI: finalize `context/specs/11-local-ai.md`, implement
+  and verify. Then units 12–14 in order (same branch policy).
 
 ## Open Questions
 

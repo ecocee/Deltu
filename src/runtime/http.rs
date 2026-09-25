@@ -104,6 +104,7 @@ fn error_message(error: &ApiError) -> String {
 }
 
 async fn handle_events(app: AppState, body: JsonValue) -> Result<Json<JsonValue>, ApiError> {
+    let batch_started = std::time::Instant::now();
     // Body size was enforced by the router layer; validate the shape here.
     let Some(events_value) = body.get("events").cloned() else {
         return Err(ApiError::BadRequest(
@@ -151,8 +152,11 @@ async fn handle_events(app: AppState, body: JsonValue) -> Result<Json<JsonValue>
             mpsc::error::TrySendError::Full(_) => ApiError::QueueFull,
             mpsc::error::TrySendError::Closed(_) => ApiError::ShuttingDown,
         })?;
-
     let outcome = reply_rx.await.map_err(|_| ApiError::ShuttingDown)?;
+
+    if let Ok(mut metrics) = app.metrics.lock() {
+        metrics.record_batch(outcome.accepted.len(), batch_started);
+    }
 
     Ok(Json(json!({
         "success": true,
@@ -172,6 +176,11 @@ pub(crate) async fn get_health() -> Json<JsonValue> {
 pub(crate) async fn get_status(State(app): State<AppState>) -> Json<JsonValue> {
     // Single lock acquisition: queue depth comes from the same guard
     // (std Mutex is not reentrant — a second lock would self-deadlock).
+    let metrics_snapshot = app
+        .metrics
+        .lock()
+        .map(|mut metrics| metrics.snapshot())
+        .unwrap_or_else(|_| serde_json::json!({}));
     let snapshot = {
         let mqtt = app.mqtt_counters.snapshot();
         let core = app.core.lock().expect("worker poisoned");
@@ -198,6 +207,7 @@ pub(crate) async fn get_status(State(app): State<AppState>) -> Json<JsonValue> {
                 "messages_dropped": mqtt.messages_dropped,
                 "reconnects": mqtt.reconnects,
             },
+            "metrics": metrics_snapshot,
             "actions": {
                 "attempted": core.action_counters().actions_attempted,
                 "succeeded": core.action_counters().actions_succeeded,
@@ -222,6 +232,8 @@ pub(crate) struct AppState {
     pub queue_capacity: usize,
     /// MQTT adapter counters (zeroed when the adapter is disabled).
     pub mqtt_counters: Arc<crate::input::mqtt::SharedMqttCounters>,
+    /// Metrics registry (latency rings + throughput window).
+    pub metrics: Arc<std::sync::Mutex<crate::metrics::MetricsRegistry>>,
     /// Process start for uptime.
     pub started: Arc<std::time::Instant>,
     /// Maximum events per batch (from config).
@@ -322,6 +334,7 @@ pub async fn serve(config: RuntimeConfig) -> Result<(), String> {
         queue,
         queue_capacity,
         mqtt_counters,
+        metrics: Arc::new(std::sync::Mutex::new(crate::metrics::MetricsRegistry::new())),
         started: Arc::new(std::time::Instant::now()),
         max_batch: http.max_batch,
     };

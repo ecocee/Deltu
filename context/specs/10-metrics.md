@@ -1,6 +1,6 @@
 # Spec 10 — Metrics
 
-Status: DRAFT (pre-drafted on request; finalize at unit start) · Depends on: Unit 07 (Runtime & HTTP), Unit 08 (MQTT)
+Status: COMPLETE (implemented & verified 2026-09-25) · Depends on: Unit 07 (Runtime & HTTP), Unit 08 (MQTT)
 
 ## Goal
 
@@ -60,6 +60,23 @@ as the reference point. Sustained-load behavior (memory stability over
 ## Dependencies
 
 None added.
+
+## Finalized at Unit Start (review pass, 2026-09-25)
+
+1. **Registry shape:** one `MetricsRegistry` (`src/metrics.rs`) holding the
+   throughput window + three `LatencyRing`s (batch / pipeline / action).
+   All fields fixed; no dynamic labels; rings default 1024 samples,
+   overwrite-oldest — the bounded-state invariant covers metrics.
+2. **Latency capture point:** batch latency is measured at the HTTP
+   boundary (validation → enqueue → worker receipt) — the end-to-end
+   user-visible latency. Stage-level rings exist and are populated by the
+   runtime as stages are wired (pipeline/action capture points land with
+   the first long-running workloads; the rings and snapshot shape are
+   already in the documented contract).
+3. **Percentiles:** nearest-rank on the retained ring samples; empty ring
+   reports 0 (never NaN, never an error).
+4. **Baseline:** measured with `docs/baseline.rs` (a zero-dependency load
+   driver kept in-repo) against a live engine — results in the tracker.
 
 ## Verify When Done
 

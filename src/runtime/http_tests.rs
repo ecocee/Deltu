@@ -41,6 +41,7 @@ fn test_state(
             queue: Arc::new(tx),
             queue_capacity,
             mqtt_counters: Arc::new(crate::input::mqtt::SharedMqttCounters::new()),
+            metrics: Arc::new(Mutex::new(crate::metrics::MetricsRegistry::new())),
             started: Arc::new(Instant::now()),
             max_batch,
         },
