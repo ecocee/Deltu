@@ -1,0 +1,41 @@
+# Repo-wide verification: the exact checklist every unit is held to,
+# plus a Docker image smoke build (spec 14).
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo test --lib
+      - run: cargo build --release
+
+  docker-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build -t deltu:ci .
+      - name: Run container and hit /health
+        run: |
+          docker run -d --name deltu-smoke -p 8080:8080 deltu:ci
+          for i in $(seq 1 20); do
+            curl -sf http://127.0.0.1:8080/health && exit 0
+            sleep 0.5
+          done
+          echo "container failed health check" >&2
+          docker logs deltu-smoke >&2
+          exit 1
+      - name: Cleanup
+        if: always()
+        run: docker rm -f deltu-smoke 2>/dev/null || true

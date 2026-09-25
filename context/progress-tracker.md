@@ -4,15 +4,33 @@ Update this file after every meaningful implementation change.
 
 ## Current Phase
 
-- Unit 14 — Packaging & Deployment: **NEXT** (pre-drafted spec 14 to be
-  finalized first; final unit)
+- All 14 units **COMPLETE** — MVP build plan delivered.
 
 ## Current Goal
 
-- Finalize `context/specs/14-packaging-deployment.md`, then ship the
-  Dockerfile, CI, release build numbers, and deployment docs.
+- Post-MVP: drive the release workflow on a `v0.1.0` tag; extend SDKs /
+  adapters as requirements arrive (infra on demand).
 
 ## Completed
+
+- Unit 14 — Packaging & Deployment: **COMPLETE** (2026-09-25, per
+  `context/specs/14-packaging-deployment.md`, on `feat/09-cli`)
+  - Multi-stage Dockerfile: distroless/cc runtime, non-root, shell-free
+    `HEALTHCHECK` via the engine's own `deltu health` CLI; AI excluded
+    from the default image (spec 11 gating).
+  - `.github/workflows/ci.yml`: fmt/clippy/test per PR + Docker smoke
+    (build, run, real `/health` probe).
+  - `.github/workflows/release.yml`: verify → build Linux x86_64,
+    Linux ARM64 (`cross`), macOS ARM64 → `SHA256SUMS` → GitHub Release.
+  - `docker/compose.yaml` + mosquitto config + validated `engine.yaml`:
+    two-container MQTT demo (no Kubernetes/Helm — infra on demand).
+  - `examples/demo.sh`: scripted sensor→HTTP→pipeline→state→rule→action
+    proof, verified live twice (structured log line fired,
+    `accepted [true,true,true]`, `actions_fired 1`).
+  - `docs/deploy.md`: self-hosting guide matching exactly what the
+    workflows produce.
+  - Release numbers (Apple Silicon, stripped): binary 5.2 MB, cold start
+    to `/health` ≈ 0.65 s; Unit 10 baseline: ≈77k events/s loopback.
 
 - Unit 13 — SDKs: **COMPLETE** (2026-09-25, per
   `context/specs/13-sdks.md`, on `feat/09-cli`)

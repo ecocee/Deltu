@@ -1,0 +1,26 @@
+# Engine config for the compose demo: ingest MQTT from the broker and
+# log detected door-open transitions. Serde shapes follow the engine's
+# documented config format (rules use YAML external tags, actions use
+# internal `type:` tags).
+http:
+  bind: 0.0.0.0:8080
+mqtt:
+  enabled: true
+  broker_url: mqtt://mosquitto:1883
+  topics:
+    - "sensors/#"
+rules:
+  - id: door-open-log
+    on: !Event
+      kind: door
+    condition: !Comparison
+      field: !EventValue
+      op: Eq
+      value: !Text
+        open
+    action: demo-log
+actions:
+  - id: demo-log
+    kind:
+      type: log
+      level: info

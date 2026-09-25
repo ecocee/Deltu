@@ -1,2 +1,4 @@
 /target
 /.freebuff
+node_modules/
+dist/

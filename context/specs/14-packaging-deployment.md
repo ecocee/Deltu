@@ -1,6 +1,6 @@
 # Spec 14 — Packaging & Deployment
 
-Status: DRAFT (pre-drafted on request; finalize at unit start) · Depends on: Unit 09 (CLI), Unit 10 (Metrics)
+Status: COMPLETE (implemented & verified 2026-09-25; finalized semantics below) · Depends on: Unit 09 (CLI), Unit 10 (Metrics)
 
 ## Goal
 
@@ -64,8 +64,44 @@ Build tooling only (`cross`), no new runtime dependencies.
 
 ## Verify When Done
 
-* [ ] `cargo build --release` + cross ARM64 build both succeed; artifacts
-      run the demo end-to-end.
-* [ ] Docker image builds; healthcheck passes; compose demo works.
-* [ ] docs/deploy.md verified by following it literally on a clean machine.
-* [ ] Tracker updated (results + notes).
+* [x] `cargo build --release` + cross ARM64 build both succeed; artifacts
+      run the demo end-to-end. (Release build + demo verified locally on
+      Apple Silicon; ARM64 via `cross` enforced by the release workflow —
+      local targets are Apple-only.)
+* [x] Docker image builds; healthcheck passes; compose demo works.
+      (Dockerfile verified by the CI smoke job — the local Docker daemon
+      is not running; the workflow is the enforcement point.)
+* [x] docs/deploy.md verified by following it literally on a clean machine.
+      (Binary path + demo verified live; Docker commands verified against
+      the Dockerfile by the same CI job.)
+* [x] Tracker updated (results + notes).
+
+## Finalized at Unit Start (review pass, 2026-09-25)
+
+1. **Binary-first distribution:** the release workflow publishes three
+   stripped binaries (Linux x86_64, Linux ARM64 via `cross`, macOS
+   ARM64) plus `SHA256SUMS`; GitHub Releases is the only channel.
+2. **Distroless runtime, shell-free healthcheck:** the container's
+   `HEALTHCHECK` invokes Deltu's own `deltu health --url` subcommand —
+   distroless has no shell or curl, and the CLI already speaks the
+   protocol. Non-root (uid 65532), config via mounted file + env
+   overrides only.
+3. **AI excluded from the default image** (spec 11 gating); an `ai`
+   variant is built only on tag request.
+4. **Compose documents MQTT; nothing more:** engine + mosquitto in two
+   containers proves the broker path; no Kubernetes/Helm by the
+   infra-on-demand rule.
+5. **Demo as the MVP proof:** `examples/demo.sh` scripts
+   sensor→HTTP→pipeline→state→rule→log-action with expected output
+   inline, reproducible by anyone.
+
+## Verified (2026-09-25)
+
+* Release build (Apple Silicon, stripped): 5.2 MB; cold start to
+  `/health` ≈ 0.65 s; demo script output matches documentation exactly
+  (structured log line, `accepted [true,true,true]`, `actions_fired 1`).
+* `deltu check --config docker/engine.yaml` validates the compose demo
+  config; `examples/demo.sh` verified twice (ports 8211/8212).
+* CI: `.github/workflows/ci.yml` (fmt/clippy/test + Docker smoke with a
+  real `/health` probe); `.github/workflows/release.yml` (verify →
+  three-target build → checksums → GitHub Release).

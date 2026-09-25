@@ -1,0 +1,22 @@
+# Two-container demo: engine + mosquitto. Documents the MQTT path
+# end-to-end locally (spec 14; no Kubernetes — infra only on demand).
+#
+#   docker compose -f docker/compose.yaml up --build
+#   then: see docs/deploy.md § demo for the event script
+
+services:
+  mosquitto:
+    image: eclipse-mosquitto:2
+    ports: ["1883:1883"]
+    volumes:
+      - ./mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+
+  engine:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    depends_on: [mosquitto]
+    ports: ["8080:8080"]
+    volumes:
+      - ./engine.yaml:/config/engine.yaml:ro
+    command: ["run", "--config", "/config/engine.yaml"]
