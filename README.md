@@ -15,9 +15,9 @@ Install ──> deltu demo ──> deltu init ──> deltu run ──> Send Eve
 
 ### 1. Install
 ```bash
-curl -fsSL https://deltu.dev/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/ecocee/Deltu/main/scripts/install.sh | sh
 ```
-*To uninstall at any time: `curl -fsSL https://deltu.dev/uninstall.sh | sh`*
+*To uninstall at any time: `curl -fsSL https://raw.githubusercontent.com/ecocee/Deltu/main/scripts/uninstall.sh | sh`*
 
 ### 2. See DELTU in action
 ```bash
