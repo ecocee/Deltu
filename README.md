@@ -1,5 +1,4 @@
-# DELTU
-### *Make Data Behave.*
+![Deltu](assets/banner.png)
 
 A lightweight, local-first event-processing engine in Rust that turns continuous data into **meaningful events, state, rules, and actions**.
 
