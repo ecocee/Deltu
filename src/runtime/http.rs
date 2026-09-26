@@ -270,6 +270,70 @@ fn queue_depth_snapshot(app: &AppState) -> usize {
         .unwrap_or(0)
 }
 
+/// `GET /metrics`: Prometheus-compatible metrics endpoint.
+pub(crate) async fn get_metrics(State(app): State<AppState>) -> String {
+    let (events_total, events_per_sec) = if let Ok(mut metrics) = app.metrics.lock() {
+        (
+            metrics.events_total.total_events(),
+            metrics.events_total.events_per_sec(),
+        )
+    } else {
+        (0, 0.0)
+    };
+
+    let (attempted, succeeded, failed, queue_depth, state_entries) = {
+        if let Ok(core) = app.core.lock() {
+            let counters = core.action_counters();
+            (
+                counters.actions_attempted,
+                counters.actions_succeeded,
+                counters.actions_failed,
+                core.last_queue_depth,
+                core.state_entries(),
+            )
+        } else {
+            (0, 0, 0, 0, 0)
+        }
+    };
+
+    let uptime = app.started.elapsed().as_secs();
+
+    format!(
+        "# HELP deltu_events_received_total Total events received into the processing channel\n\
+         # TYPE deltu_events_received_total counter\n\
+         deltu_events_received_total {}\n\
+         # HELP deltu_events_per_sec Current event processing throughput (events/sec)\n\
+         # TYPE deltu_events_per_sec gauge\n\
+         deltu_events_per_sec {}\n\
+         # HELP deltu_actions_attempted_total Total action executions attempted\n\
+         # TYPE deltu_actions_attempted_total counter\n\
+         deltu_actions_attempted_total {}\n\
+         # HELP deltu_actions_succeeded_total Total successful action executions\n\
+         # TYPE deltu_actions_succeeded_total counter\n\
+         deltu_actions_succeeded_total {}\n\
+         # HELP deltu_actions_failed_total Total failed action executions\n\
+         # TYPE deltu_actions_failed_total counter\n\
+         deltu_actions_failed_total {}\n\
+         # HELP deltu_queue_depth Current processing queue depth\n\
+         # TYPE deltu_queue_depth gauge\n\
+         deltu_queue_depth {}\n\
+         # HELP deltu_state_entries Active state store entries\n\
+         # TYPE deltu_state_entries gauge\n\
+         deltu_state_entries {}\n\
+         # HELP deltu_uptime_seconds Engine uptime in seconds\n\
+         # TYPE deltu_uptime_seconds gauge\n\
+         deltu_uptime_seconds {}\n",
+        events_total,
+        events_per_sec,
+        attempted,
+        succeeded,
+        failed,
+        queue_depth,
+        state_entries,
+        uptime
+    )
+}
+
 /// Builds the axum router with documented routes and the body-size guard.
 pub(crate) fn router(app: AppState, max_body_bytes: usize) -> axum::Router {
     use axum::extract::DefaultBodyLimit;
@@ -279,6 +343,7 @@ pub(crate) fn router(app: AppState, max_body_bytes: usize) -> axum::Router {
         .route("/v1/events", post(post_events))
         .route("/health", get(get_health))
         .route("/v1/status", get(get_status))
+        .route("/metrics", get(get_metrics))
         .layer(DefaultBodyLimit::max(max_body_bytes))
         .with_state(app)
 }

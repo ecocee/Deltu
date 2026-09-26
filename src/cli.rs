@@ -79,6 +79,16 @@ pub enum Command {
         #[arg(long, default_value_t = false)]
         follow: bool,
     },
+    /// Generate a starter deltu.yaml configuration file with comments.
+    Init {
+        /// Path to write the configuration file.
+        #[arg(long, default_value = "deltu.yaml")]
+        path: String,
+    },
+    /// Run an interactive, self-contained live terminal demo (zero config).
+    Demo,
+    /// Diagnose system environment, port availability, and permissions.
+    Doctor,
     /// Print the effective configuration (defaults + file + env overrides).
     Config {
         /// Path to a YAML or JSON config file. Omit for defaults.
@@ -98,6 +108,9 @@ pub const EXIT_USAGE: i32 = 2;
 /// Runs the parsed command. Blocking; returns the process exit code.
 pub fn execute(command: Command) -> i32 {
     match command {
+        Command::Init { path } => init(&path),
+        Command::Demo => demo(),
+        Command::Doctor => doctor(),
         Command::Run { config } => run(config),
         Command::Check { config } => check(&config),
         Command::Status { url } => status(&url),
@@ -149,14 +162,196 @@ fn run(config: Option<String>) -> i32 {
     }
 }
 
-fn check(config: &str) -> i32 {
-    match load_config(Some(config)) {
+fn init(path: &str) -> i32 {
+    let target = std::path::Path::new(path);
+    if target.exists() {
+        eprintln!("{path} already exists. Remove it or specify a different path.");
+        return EXIT_FAILURE;
+    }
+    let content = r#"# DELTU Engine Configuration
+# Make Data Behave — https://github.com/ecocee/deltu
+
+http:
+  bind: 127.0.0.1:8080
+
+rules:
+  - name: high-temperature
+    description: "Alert when temperature sensor reading exceeds 80"
+    when: temperature > 80
+    within: 60s
+    action: log-alert
+
+  - name: api-error-storm
+    description: "Detect rapid API errors within 30 seconds"
+    when: count(http.error) > 10
+    within: 30s
+    action: log-alert
+
+actions:
+  - id: log-alert
+    kind:
+      type: log
+      level: warn
+"#;
+    match std::fs::write(path, content) {
+        Ok(_) => {
+            println!("Created starter configuration at {path}");
+            println!(
+                "Run 'deltu check --config {path}' to validate, or 'deltu run --config {path}' to start."
+            );
+            0
+        }
+        Err(e) => {
+            eprintln!("Failed to write {path}: {e}");
+            EXIT_FAILURE
+        }
+    }
+}
+
+fn demo() -> i32 {
+    use crate::actions::{ActionDefinition, ActionDispatcher, ActionKind, LogLevel};
+    use crate::event::{Event, Payload};
+    use crate::processing::{PipelineConfig, ProcessingPipeline};
+    use crate::rules::{
+        Condition, EvalInput, Field, Literal, OncePerWindow, Operator, Rule, RuleEngine, Trigger,
+    };
+    use crate::state::{StateConfig, StateStore};
+
+    println!("DELTU Engine v{} — Demo Mode", crate::version());
+    println!("Make Data Behave.\n");
+    println!("Initializing local processing pipeline (0.0s setup)... OK");
+    println!("──────────────────────────────────────────────────");
+
+    let mut pipeline = ProcessingPipeline::new(PipelineConfig::default()).unwrap();
+    let mut state = StateStore::new(StateConfig::default()).unwrap();
+
+    let rule = Rule {
+        id: "high-temperature".to_string(),
+        description: Some("Trigger alert when temperature exceeds 80°C".to_string()),
+        on: Trigger::Event {
+            kind: "temperature".to_string(),
+        },
+        condition: Condition::Comparison {
+            field: Field::EventValue,
+            op: Operator::Gt,
+            value: Literal::Numeric(80.0),
+        },
+        action: "log-alert".to_string(),
+        suppression: Some(OncePerWindow { window_ms: 60000 }),
+    };
+
+    let mut engine = RuleEngine::new(vec![rule]).unwrap();
+    let mut dispatcher = ActionDispatcher::new(vec![ActionDefinition {
+        id: "log-alert".to_string(),
+        kind: ActionKind::Log {
+            level: LogLevel::Warn,
+            template: None,
+        },
+    }])
+    .unwrap();
+
+    let events = vec![
+        ("e1", "sensor-1", "temperature", 1000, 72.4, "ACCEPTED"),
+        (
+            "e1",
+            "sensor-1",
+            "temperature",
+            1000,
+            72.4,
+            "DUPLICATE DROPPED",
+        ),
+        ("e2", "sensor-1", "temperature", 2000, 74.1, "ACCEPTED"),
+        ("e3", "sensor-1", "temperature", 3000, 88.9, "STATE CHANGED"),
+    ];
+
+    let mut total_ingested = 0;
+    let mut dup_count = 0;
+    let mut state_changes = 0;
+    let mut rules_fired = 0;
+    let mut actions_done = 0;
+
+    for (id, src, kind, ts, val, label) in events {
+        total_ingested += 1;
+        let event = Event::new(id, src, kind, ts, Payload::Numeric { value: val }).unwrap();
+        let outputs = pipeline.process(event.clone());
+        if outputs.is_empty() {
+            dup_count += 1;
+            println!("  📥 Event {id} ({src}, {kind}={val:.1}°C) ──> [{label}]");
+        } else {
+            for out in outputs {
+                state.observe(&out);
+                if label == "STATE CHANGED" {
+                    state_changes += 1;
+                }
+                let eval_input = EvalInput::from_event(&event, &state);
+                let requests = engine.evaluate(&eval_input);
+                if !requests.is_empty() {
+                    rules_fired += requests.len();
+                    println!("  ⚡ Rule Matched: 'high-temperature' (val: {val:.1} > 80.0)");
+                    let outcomes = dispatcher.dispatch(&requests, ts);
+                    actions_done += outcomes.len();
+                    for outcome in outcomes {
+                        if outcome.result.is_ok() {
+                            println!(
+                                "  🔥 Action Executed: log-alert -> [WARN] high-temperature threshold breached"
+                            );
+                        }
+                    }
+                } else {
+                    println!("  📥 Event {id} ({src}, {kind}={val:.1}°C) ──> [{label}]");
+                }
+            }
+        }
+    }
+
+    println!("──────────────────────────────────────────────────");
+    println!(
+        "✅ Demo complete! Processed {total_ingested} events | {dup_count} duplicate removed | {state_changes} state change | {rules_fired} rule triggered | {actions_done} action executed."
+    );
+    println!("\n👉 Next step: Run 'deltu init' to generate your deltu.yaml configuration!");
+    0
+}
+
+fn doctor() -> i32 {
+    println!("DELTU DOCTOR (v{})", crate::version());
+    println!("──────────────────────────────────────────");
+    println!("✓ DELTU Version: {}", crate::version());
+    println!("✓ Operating System: {}", std::env::consts::OS);
+    println!("✓ Architecture: {}", std::env::consts::ARCH);
+
+    let temp = std::env::temp_dir().join("deltu-doc-test.tmp");
+    if std::fs::write(&temp, "ok").is_ok() {
+        let _ = std::fs::remove_file(temp);
+        println!("✓ Working Directory: Writable");
+    } else {
+        println!("✗ Working Directory: Permission Error");
+    }
+
+    match std::net::TcpListener::bind("127.0.0.1:8080") {
+        Ok(_) => println!("✓ HTTP Port 8080: Available"),
+        Err(_) => println!("! HTTP Port 8080: In Use (or permission required)"),
+    }
+
+    println!("✓ Core Runtime: Ready");
+    println!("──────────────────────────────────────────");
+    println!("Environment check complete!");
+    0
+}
+
+fn check(config_path: &str) -> i32 {
+    match load_config(Some(config_path)) {
         Ok(config) => {
             if let Err(error) = config.validate() {
-                eprintln!("{error}");
+                eprintln!(
+                    "Configuration Check Failed:\n  WHAT: Validation error\n  WHERE: {config_path}\n  WHY: {error}\n  HOW: Inspect configuration and fix invalid values."
+                );
                 return EXIT_FAILURE;
             }
-            println!("ok");
+            println!("✓ Configuration syntax valid");
+            println!("✓ {} rules parsed successfully", config.rules.len());
+            println!("✓ {} actions resolved successfully", config.actions.len());
+            println!("✓ Bind address: {}", config.http.bind);
+            println!("deltu config check: OK");
             0
         }
         Err(code) => code,

@@ -150,3 +150,39 @@ pub struct Rule {
     /// Optional once-per-window suppression.
     pub suppression: Option<OncePerWindow>,
 }
+
+/// Config-shaped rule representation supporting either low-level AST or high-level DSL.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub enum RuleConfig {
+    /// Raw AST rule representation.
+    Raw(Rule),
+    /// Simplified DSL rule representation (`when`, `within`, etc.).
+    Dsl(crate::rules::dsl::DslRuleConfig),
+}
+
+impl<'de> Deserialize<'de> for RuleConfig {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let val = serde_yaml::Value::deserialize(deserializer)?;
+        if val.get("when").is_some() {
+            let dsl: crate::rules::dsl::DslRuleConfig =
+                serde_yaml::from_value(val).map_err(serde::de::Error::custom)?;
+            Ok(RuleConfig::Dsl(dsl))
+        } else {
+            let rule: Rule = serde_yaml::from_value(val).map_err(serde::de::Error::custom)?;
+            Ok(RuleConfig::Raw(rule))
+        }
+    }
+}
+
+impl RuleConfig {
+    /// Resolves into a validated low-level [`Rule`].
+    pub fn compile(self) -> Result<Rule, String> {
+        match self {
+            RuleConfig::Raw(rule) => Ok(rule),
+            RuleConfig::Dsl(dsl) => dsl.compile(),
+        }
+    }
+}

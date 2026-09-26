@@ -1,67 +1,63 @@
-![Deltu](assets/banner.png)
+# DELTU
+### *Make Data Behave.*
+
 A lightweight, local-first event-processing engine in Rust that turns continuous data into **meaningful events, state, rules, and actions**.
 
-Deltu sits between your data sources and the logic that needs to react to them.
-
 ```text
-Data → Filter → Deduplicate → Aggregate → Change → State → Rules → Actions
+Install ──> deltu demo ──> deltu init ──> deltu run ──> Send Events ──> Trigger Actions
 ```
 
 **No cloud required. No database required. No AI required. One small binary.**
 
-### Why DELTU?
-
-* **Fast** — built in Rust for efficient continuous processing
-* **Local-first** — run it on a server, edge device, or Raspberry Pi
-* **Bounded** — explicit limits on queues, caches, windows, and state
-* **Deterministic** — predictable processing without hidden background behavior
-* **AI optional** — use AI only when deterministic processing is not enough
-* **Developer-first** — HTTP, MQTT, Python, TypeScript, CLI, webhooks
-
-### At a glance
-
-|                      |                                            |
-| -------------------- | ------------------------------------------ |
-| ⚡ **≈77k events/s**  | Dev-build loopback benchmark               |
-| 🦀 **Rust**          | Small, efficient runtime                   |
-| 📦 **Single binary** | No runtime dependency stack                |
-| 🌍 **Local-first**   | No telemetry / no cloud dependency         |
-| 🔌 **HTTP + MQTT**   | Connect applications, devices, and sensors |
-| 🧠 **AI optional**   | Never required for the core engine         |
-
 ---
 
-## See DELTU in action
+## ⚡ 5-Minute Quickstart
 
-```text
-Continuous data
-       ↓
-temperature: 72
-temperature: 74
-temperature: 81
-temperature: 86
-       ↓
-   STATE CHANGE
-       ↓
-  RULE MATCHED
-       ↓
- WEBHOOK FIRED ✓
-```
-
-Run the complete demo:
-
+### 1. Install
 ```bash
-./examples/demo.sh 8211
+curl -fsSL https://deltu.dev/install.sh | sh
 ```
+*To uninstall at any time: `curl -fsSL https://deltu.dev/uninstall.sh | sh`*
 
-Or build from source:
-
+### 2. See DELTU in action
 ```bash
-cargo run --release -- run
+deltu demo
 ```
 
-Then send an event:
+### 3. Create your configuration
+```bash
+deltu init
+```
+Generates a `deltu.yaml` with simple human-readable rules:
+```yaml
+http:
+  bind: 127.0.0.1:8080
 
+rules:
+  - name: high-temperature
+    when: temperature > 80
+    within: 60s
+    action: log-alert
+
+  - name: api-error-storm
+    when: count(http.error) > 10
+    within: 30s
+    action: log-alert
+
+actions:
+  - id: log-alert
+    kind:
+      type: log
+      level: warn
+```
+
+### 4. Validate & Start
+```bash
+deltu check --config deltu.yaml
+deltu run --config deltu.yaml
+```
+
+### 5. Send an event
 ```bash
 curl -X POST http://127.0.0.1:8080/v1/events \
   -H 'content-type: application/json' \
