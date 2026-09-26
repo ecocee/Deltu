@@ -1,308 +1,503 @@
 ![Deltu](assets/banner.png)
-**A small, self-hostable event-processing engine in Rust.** Sensors and
-devices stream events in over HTTP or MQTT; Deltu filters, deduplicates,
-aggregates, and detects changes — bounded memory, no unbounded growth —
-then evaluates rules against current state and fires actions. It runs as
-a single binary, on a Raspberry Pi or a server, and never phones home.
+A lightweight, local-first event-processing engine in Rust that turns continuous data into **meaningful events, state, rules, and actions**.
 
-Built unit-by-unit against a 14-unit plan (`context/build-plan.md`);
-every unit carries its spec, verification results, and commit history
-(`context/specs/`, `context/progress-tracker.md`).
+Deltu sits between your data sources and the logic that needs to react to them.
 
-## Why Deltu
-
-- **Bounded by construction** — every cache, window, and state store has
-  explicit capacity and eviction. No slow leaks, no runaway memory.
-- **Deterministic core** — the engine is clock-free and synchronous;
-  wall time enters only at the runtime boundary. Testing needs no
-  sleeps and no mocks of the clock.
-- **Failures are counted, never fatal** — a broken webhook, a full
-  queue, a failed snapshot: the engine keeps processing and the
-  counter is the alarm.
-- **AI is opt-in, not baked in** — a provider boundary with an enforced
-  invocation policy; nothing AI compiles into the default build.
-- **One binary** — Rust static binary with a distroless container
-  option; no runtime dependencies, no telemetry.
-
-## Verified numbers
-
-| Metric | Value |
-| --- | --- |
-| Ingest throughput (dev build, loopback) | ≈ 77k events/s |
-| Latency p95 / p99 (same baseline) | 1 ms / 1 ms |
-| Release binary (stripped, Apple Silicon) | 5.2 MB |
-| Cold start to healthy | ≈ 0.65 s |
-| Rust test suite | 166 tests, clippy clean |
-| SDK suites | 12 tests each, incl. live end-to-end |
-
-## Quick start
-
-### 1. Install (pick one path)
-
-```mermaid
-flowchart LR
-    start([New user]) --> q{"How do you want to run Deltu?"}
-    q -->|Simplest| rel["Download a release binary"]
-    q -->|Have Rust| cargo["cargo build"]
-    q -->|Have Docker| docker["docker build"]
-    rel --> step2
-    cargo --> step2
-    docker --> step2
-    step2["Write engine.yaml: inputs + rules + actions"] --> check
-    check["deltu check — validate before deploying"] -->|ok| run
-    check -->|error| fix["Fix the named problem"] --> check
-    run["deltu run  (or: deltu up for background)"] --> send
-    send["Send events: HTTP / MQTT / SDK"] --> watch
-    watch["deltu status · deltu logs — actions fire, counters grow"]
+```text
+Data → Filter → Deduplicate → Aggregate → Change → State → Rules → Actions
 ```
 
-**Path A — download a release binary** (no toolchain needed):
+**No cloud required. No database required. No AI required. One small binary.**
 
-```bash
-# from https://github.com/ecocee/Deltu/releases
-deltu run                              # defaults: 127.0.0.1:8080
+### Why DELTU?
+
+* **Fast** — built in Rust for efficient continuous processing
+* **Local-first** — run it on a server, edge device, or Raspberry Pi
+* **Bounded** — explicit limits on queues, caches, windows, and state
+* **Deterministic** — predictable processing without hidden background behavior
+* **AI optional** — use AI only when deterministic processing is not enough
+* **Developer-first** — HTTP, MQTT, Python, TypeScript, CLI, webhooks
+
+### At a glance
+
+|                      |                                            |
+| -------------------- | ------------------------------------------ |
+| ⚡ **≈77k events/s**  | Dev-build loopback benchmark               |
+| 🦀 **Rust**          | Small, efficient runtime                   |
+| 📦 **Single binary** | No runtime dependency stack                |
+| 🌍 **Local-first**   | No telemetry / no cloud dependency         |
+| 🔌 **HTTP + MQTT**   | Connect applications, devices, and sensors |
+| 🧠 **AI optional**   | Never required for the core engine         |
+
+---
+
+## See DELTU in action
+
+```text
+Continuous data
+       ↓
+temperature: 72
+temperature: 74
+temperature: 81
+temperature: 86
+       ↓
+   STATE CHANGE
+       ↓
+  RULE MATCHED
+       ↓
+ WEBHOOK FIRED ✓
 ```
 
-**Path B — build from source** (needs Rust 1.75+):
-
-```bash
-cargo run --release -- run             # binds 127.0.0.1:8080
-```
-
-**Path C — Docker**:
-
-```bash
-docker build -t deltu:local .
-docker run -d -p 8080:8080 deltu:local run
-```
-
-### 2. Send your first event and watch it work
-
-```bash
-curl -s http://127.0.0.1:8080/health
-curl -s -X POST http://127.0.0.1:8080/v1/events \
-  -H 'content-type: application/json' \
-  -d '{"events":[{"id":"e1","source":"sensor-1","kind":"door.state",
-       "timestamp":1700000000000,"payload":{"type":"text","value":"open"}}]}'
-curl -s http://127.0.0.1:8080/v1/status | python3 -m json.tool
-```
-
-The whole lifecycle from a shell:
-
-```bash
-deltu up --config engine.yaml     # start in the background, wait for /health
-deltu status                      # live counters
-./examples/demo.sh 8211           # send demo events, see rules fire
-deltu logs --lines 50             # see the structured action output
-deltu down                        # graceful stop
-```
-
-Write rules, actions, MQTT and persistence in `engine.yaml`;
-`deltu check --config engine.yaml` validates it before deployment.
-Full guide: [`docs/deploy.md`](docs/deploy.md).
-
-### How an event flows through Deltu
-
-```mermaid
-flowchart TD
-    A["HTTP POST /v1/events"] --> V
-    B["MQTT broker subscription"] --> V
-    C["Python / TypeScript SDK"] --> A
-    V["Validate at the boundary: shape, types, timestamp, payload"]
-    V -->|invalid| R1["400 invalid_event — counted + named"]
-    V --> Q[("Bounded queue — backpressure: 429 when full")]
-    Q --> W["Worker — synchronous, one batch at a time"]
-    W --> F["Filter: kind allow-list"]
-    F --> D["Dedup: bounded id cache"]
-    D --> G["Aggregate: tumbling windows — mean / min / max / last"]
-    G --> CH["Change detection: deadband suppresses noise"]
-    CH --> S[("State: keyed current values, bounded + periodic expiry")]
-    W --> RU["Rules: event / state triggers, typed comparisons, suppression"]
-    S --> RU
-    RU -->|no rule fires| Quiet[("Counters still update — everything is observable")]
-    RU -->|match| ACT["Actions"]
-    ACT --> L1["log: structured JSON line"]
-    ACT --> L2["webhook: one bounded JSON request, no retries"]
-    ACT -.->|only if configured| AI["AI provider — optional, policy-gated"]
-    ACT -->|failure| ISO["Counted in /v1/status — engine keeps running"]
-```
-
-## Architecture
-
-```mermaid
-flowchart LR
-    subgraph boundary["Input boundary — validation only"]
-        HTTP["HTTP /v1/events"] --> Q
-        MQTT["MQTT adapter — reconnect + backoff"] --> Q
-    end
-    Q[("Bounded queue — backpressure")] --> W["Worker loop — synchronous core"]
-    W --> P["Pipeline"] --> ST[("State store")]
-    P --> RU["Rule engine"] --> AC["Actions — log · webhook · AI-optional"]
-    ST --> RU
-    W -.-> M["Metrics + counters — /v1/status"]
-    P -.-> M
-    ST -.-> M
-    RU -.-> M
-    AC -.-> M
-    ST -.->|optional| PS["Local snapshots — restore on restart"]
-```
-
-Processing is synchronous inside one worker; HTTP and MQTT handlers
-only validate and enqueue. The bounded queue is the backpressure
-boundary — overload answers `429 queue_full`, handlers never process.
-Network actions (webhook) run on the blocking pool: a slow receiver
-never stalls the pipeline.
-
-| Module | What it does |
-| --- | --- |
-| `src/event` | Event model + validation (spec 02) |
-| `src/processing` | Filter, dedup, aggregation, change detection (spec 03) |
-| `src/state` | Keyed current-state store, bounded, expiring (spec 04) |
-| `src/rules` | Event/state-triggered rules, suppression windows (spec 05) |
-| `src/actions` | Log + webhook actions, pluggable executors (spec 06) |
-| `src/runtime` | Config, HTTP API, worker, graceful shutdown (spec 07) |
-| `src/input/mqtt` | MQTT adapter: reconnect/backoff, bounded buffering (spec 08) |
-| `src/cli` | `run` / `check` / `status` / `health` (spec 09) |
-| `src/metrics` | Latency rings, throughput window, `/v1/status` export (spec 10) |
-| `src/ai` | Provider trait, policy, usage counters — optional (spec 11) |
-| `src/persistence` | Atomic snapshots, historical-sink contract — optional (spec 12) |
-| `sdk/python`, `sdk/typescript` | Thin clients over the public v1 API (spec 13) |
-
-## Actions
-
-Two action kinds ship today — both failure-isolated (a broken receiver
-never stops the engine; failures are counted in `/v1/status`):
-
-- **`log`** — structured JSON line on stderr.
-- **`webhook`** — one bounded JSON POST/PUT/PATCH to your endpoint
-  (configurable URL, headers, timeout; no retries):
-
-```yaml
-actions:
-  - id: notify
-    kind:
-      type: webhook
-      url: https://example.com/hooks/deltu
-      timeout_ms: 3000
-```
-
-## HTTP API (v1)
-
-| Route | Purpose | Errors |
-| --- | --- | --- |
-| `POST /v1/events` | Ingest a batch (202 on receipt) | 400 / 413 / 429 / 503 |
-| `GET /health` | Liveness | — |
-| `GET /v1/status` | Counters, queue depth, metrics, uptime | — |
-
-Every error uses one envelope:
-
-```json
-{ "success": false, "error": { "code": "invalid_event", "message": "..." } }
-```
-
-Codes: `invalid_event`, `payload_too_large`, `queue_full`,
-`shutting_down`. SDKs map them to typed exceptions one-for-one.
-
-## SDKs
-
-```python
-# pip install ./sdk/python
-from deltu import DeltuClient, Event, text
-import time
-
-with DeltuClient("http://127.0.0.1:8080") as client:
-    client.send_event(Event(id="e1", source="sensor-1", kind="door.state",
-                            timestamp=int(time.time() * 1000), payload=text("open")))
-```
-
-```js
-// npm install ./sdk/typescript
-import { DeltuClient, Event, text } from "@deltu/client";
-
-const client = new DeltuClient("http://127.0.0.1:8080");
-await client.sendEvent(new Event({ id: "e1", source: "sensor-1",
-  kind: "door.state", timestamp: Date.now(), payload: text("open") }));
-```
-
-Zero runtime dependencies beyond the HTTP client; retries off by
-default, exponential backoff for 429/503 only.
-
-## What can you build with Deltu?
-
-Deltu is **not IoT-only** — any system that emits events over HTTP or
-MQTT can use it. The same engine, inputs, and actions serve very
-different jobs:
-
-```mermaid
-flowchart TD
-    DELTU["Deltu engine — one binary, no database"] --> U1
-    DELTU --> U2
-    DELTU --> U3
-    DELTU --> U4
-    U1["Sensors & devices"] --> W1["Threshold alerts: MQTT/HTTP in — dedup + window + rule + webhook out"]
-    U2["Applications & APIs"] --> W2["Event pipelines: app/API events via SDK — filter noise, aggregate, notify"]
-    U3["Servers & infrastructure"] --> W3["Ops monitors: pushed CPU/latency/queue metrics — change detection + actions"]
-    U4["Business processes"] --> W4["State tracking: orders/jobs/devices — transitions fire suppressed actions"]
-```
-
-| Use case | Inputs | What Deltu adds | Typical action |
-| --- | --- | --- | --- |
-| Sensor/telemetry alerts | MQTT, HTTP | dedup + windows + threshold rules | webhook, log |
-| App/API event reduction | HTTP, SDKs | kind filters, dedup, counters | webhook |
-| Infra metric monitors | HTTP push | change detection with deadband | log, webhook |
-| Device/job state tracking | MQTT, HTTP | keyed current state + transitions | webhook, log |
-| Edge / offline-first | MQTT, HTTP | single small binary, local snapshots, no cloud | log, webhook |
-| Anomaly watching | any | window stats (min/max/mean/last) to rules | webhook, log |
-
-See [`context/audit/USE-CASES.md`](context/audit/USE-CASES.md) for
-verified details per use case, and the demo below for a runnable
-example.
-
-## Docker
-
-```bash
-docker build -t deltu:local .
-docker run -d -p 8080:8080 -v "$PWD/engine.yaml:/config/engine.yaml:ro" \
-  deltu:local run --config /config/engine.yaml
-```
-
-Distroless, non-root, `HEALTHCHECK` via Deltu's own `deltu health` CLI.
-MQTT demo (engine + mosquitto): `docker compose -f docker/compose.yaml up`.
-No Kubernetes or Helm — infrastructure is added when a requirement exists.
-
-## End-to-end demo
+Run the complete demo:
 
 ```bash
 ./examples/demo.sh 8211
 ```
 
-Starts an engine with a demo rule, sends three simulated sensor events,
-prints the status snapshot, and documents the expected output — the
-scripted MVP proof (simulated sensor → HTTP → filter/dedup/aggregate/
-change → state → rules → log action).
+Or build from source:
+
+```bash
+cargo run --release -- run
+```
+
+Then send an event:
+
+```bash
+curl -X POST http://127.0.0.1:8080/v1/events \
+  -H 'content-type: application/json' \
+  -d '{
+    "events": [{
+      "id": "e1",
+      "source": "sensor-1",
+      "kind": "temperature",
+      "timestamp": 1700000000000,
+      "payload": {
+        "type": "number",
+        "value": 86
+      }
+    }]
+  }'
+```
+
+---
+
+## The problem
+
+Applications continuously produce data.
+
+Sensors produce readings.
+APIs produce events.
+Servers produce metrics.
+Devices produce state changes.
+Business systems produce transactions.
+
+Most applications then end up implementing the same plumbing:
+
+```text
+filter
+deduplicate
+aggregate
+detect changes
+maintain state
+evaluate rules
+trigger actions
+```
+
+DELTU provides that runtime as one small, self-hostable engine.
+
+### The principle
+
+> **Process data first. Use AI only when necessary.**
+
+If deterministic code can understand the event, let deterministic code handle it.
+
+AI can be connected when a decision actually requires it.
+
+---
+
+## What DELTU does
+
+```mermaid
+flowchart LR
+    A[Continuous Data] --> B[DELTU]
+
+    B --> C[Filter]
+    C --> D[Deduplicate]
+    D --> E[Aggregate]
+    E --> F[Change Detection]
+    F --> G[State]
+    G --> H[Rules]
+    H --> I[Actions]
+
+    H -. optional .-> J[AI]
+    J -.-> I
+```
+
+The core engine does not require AI.
+
+It does not require Kubernetes.
+
+It does not require Kafka.
+
+It does not require Redis.
+
+It does not require a cloud service.
+
+It is designed to be useful by itself.
+
+---
+
+## What can you build?
+
+DELTU is not limited to IoT.
+
+```mermaid
+flowchart TD
+    D[DELTU]
+
+    D --> S[Sensors & Devices]
+    D --> A[Applications & APIs]
+    D --> O[Servers & Infrastructure]
+    D --> B[Business Processes]
+
+    S --> S1[Threshold alerts]
+    A --> A1[Event processing]
+    O --> O1[Infrastructure monitoring]
+    B --> B1[State transitions]
+```
+
+Examples:
+
+* Sensor and telemetry alerts
+* Application event processing
+* API event reduction
+* Infrastructure monitoring
+* Device and job state tracking
+* Edge and offline-first processing
+* Webhook automation
+* Event-driven business workflows
+* Stateful rules and notifications
+
+---
+
+## Verified numbers
+
+| Metric               |                     Value |
+| -------------------- | ------------------------: |
+| Ingest throughput    |             ≈77k events/s |
+| Latency p95 / p99    |               1 ms / 1 ms |
+| Release binary       |                    5.2 MB |
+| Cold start → healthy |                   ≈0.65 s |
+| Rust tests           |                       166 |
+| SDK tests            | 12 Python + 12 TypeScript |
+| AI required          |                        No |
+| Cloud required       |                        No |
+
+Benchmarks are environment-dependent; see the benchmark documentation for methodology.
+
+---
+
+## Quick start
+
+### 1. Install
+
+**Release binary**
+
+```bash
+# Download from GitHub Releases
+deltu run
+```
+
+**From source**
+
+```bash
+cargo run --release -- run
+```
+
+**Docker**
+
+```bash
+docker build -t deltu:local .
+
+docker run -d \
+  -p 8080:8080 \
+  deltu:local run
+```
+
+### 2. Check the engine
+
+```bash
+curl http://127.0.0.1:8080/health
+```
+
+### 3. Send an event
+
+```bash
+curl -X POST http://127.0.0.1:8080/v1/events \
+  -H 'content-type: application/json' \
+  -d '{
+    "events": [{
+      "id": "e1",
+      "source": "sensor-1",
+      "kind": "door.state",
+      "timestamp": 1700000000000,
+      "payload": {
+        "type": "text",
+        "value": "open"
+      }
+    }]
+  }'
+```
+
+### 4. Inspect the engine
+
+```bash
+curl http://127.0.0.1:8080/v1/status | python3 -m json.tool
+```
+
+---
+
+## Inputs
+
+* HTTP
+* MQTT
+* Python SDK
+* TypeScript SDK
+
+## Processing
+
+* Filtering
+* Deduplication
+* Aggregation
+* Change detection
+* Stateful processing
+* Rules
+* Suppression windows
+
+## Actions
+
+* Log
+* Webhook
+* Optional AI provider
+
+---
+
+## Architecture
+
+```mermaid
+flowchart LR
+    subgraph INPUT["Input Boundary"]
+        HTTP["HTTP"]
+        MQTT["MQTT"]
+        SDK["SDKs"]
+    end
+
+    INPUT --> Q[("Bounded Queue")]
+
+    Q --> W["Worker"]
+
+    W --> P["Processing Pipeline"]
+
+    P --> F["Filter"]
+    F --> D["Dedup"]
+    D --> A["Aggregate"]
+    A --> C["Change Detection"]
+
+    C --> S[("State")]
+
+    S --> R["Rules"]
+
+    R --> AC["Actions"]
+
+    AC --> L["Log"]
+    AC --> WH["Webhook"]
+    AC -. optional .-> AI["AI"]
+
+    W -.-> M["Metrics"]
+    S -.-> M
+    R -.-> M
+    AC -.-> M
+```
+
+The input boundary validates and enqueues events.
+
+The core worker processes them synchronously.
+
+The bounded queue provides the backpressure boundary.
+
+Slow network actions are isolated from the processing pipeline.
+
+---
+
+## Why DELTU?
+
+### Bounded by construction
+
+Queues, caches, windows, and state stores have explicit limits and eviction policies.
+
+### Deterministic core
+
+The processing core is synchronous and clock-free. Wall time enters only at the runtime boundary.
+
+### Failures are observable
+
+A failed webhook or full queue does not silently disappear.
+
+Failures are counted and exposed through the status API.
+
+### AI is optional
+
+The default engine does not require an AI provider.
+
+AI can be introduced only where it provides value.
+
+### One binary
+
+A small Rust runtime that can run on a server, edge machine, or Raspberry Pi.
+
+---
+
+## SDKs
+
+### Python
+
+```python
+from deltu import DeltuClient, Event, text
+import time
+
+with DeltuClient("http://127.0.0.1:8080") as client:
+    client.send_event(
+        Event(
+            id="e1",
+            source="sensor-1",
+            kind="door.state",
+            timestamp=int(time.time() * 1000),
+            payload=text("open"),
+        )
+    )
+```
+
+### TypeScript
+
+```typescript
+import { DeltuClient, Event, text } from "@deltu/client";
+
+const client = new DeltuClient("http://127.0.0.1:8080");
+
+await client.sendEvent(
+  new Event({
+    id: "e1",
+    source: "sensor-1",
+    kind: "door.state",
+    timestamp: Date.now(),
+    payload: text("open"),
+  })
+);
+```
+
+---
+
+## HTTP API
+
+| Route             | Purpose                     |
+| ----------------- | --------------------------- |
+| `POST /v1/events` | Ingest events               |
+| `GET /health`     | Health check                |
+| `GET /v1/status`  | Runtime status and counters |
+
+Example error:
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "invalid_event",
+    "message": "..."
+  }
+}
+```
+
+---
+
+## Configuration
+
+Deltu is configured through `engine.yaml`.
+
+```bash
+deltu check --config engine.yaml
+```
+
+Validate first.
+
+Then deploy:
+
+```bash
+deltu run --config engine.yaml
+```
+
+For background operation:
+
+```bash
+deltu up --config engine.yaml
+```
+
+Inspect:
+
+```bash
+deltu status
+deltu logs
+```
+
+Stop:
+
+```bash
+deltu down
+```
+
+Full deployment guide: [`docs/deploy.md`](docs/deploy.md)
+
+---
 
 ## Development
 
 ```bash
-cargo test --lib          # full suite
+cargo test --lib
 cargo clippy --all-targets
-cargo bench               # pipeline, state, rules benchmarks
+cargo bench
 cargo run --release -- run
 ```
 
-CI (`ci.yml`) runs fmt, clippy, tests, a release build, and a Docker
-smoke test per PR; `release.yml` publishes stripped x86_64/ARM64 Linux
-and macOS ARM64 binaries with checksums on `v*` tags.
+CI runs formatting, clippy, tests, release builds, and Docker smoke tests.
 
-## License
+Release builds publish Linux x86_64, Linux ARM64, and macOS ARM64 artifacts.
 
-Deltu is licensed under the **Apache License 2.0** — free for use,
-modification, distribution, and commercial use. See
-[LICENSE](LICENSE) for the full text and [NOTICE](NOTICE) for
-attribution.
+---
 
-Contributions are welcome under Apache-2.0's standard terms; copyright
-in each contributor's code remains with that contributor — see
-[CONTRIBUTING.md](CONTRIBUTING.md) for the contributor and IP
-expectations. The DELTU name and logo are trademarks of ECOCEE, separate
-from the software license — see [TRADEMARKS.md](TRADEMARKS.md).
+## Open source
+
+Deltu is licensed under the **Apache License 2.0**.
+
+* [`LICENSE`](LICENSE)
+* [`NOTICE`](NOTICE)
+* [`CONTRIBUTING.md`](CONTRIBUTING.md)
+* [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md)
+* [`SECURITY.md`](SECURITY.md)
+* [`TRADEMARKS.md`](TRADEMARKS.md)
+
+The DELTU name and logo are trademarks of ECOCEE; the software itself is Apache-2.0 licensed.
+
+---
+
+## Build with DELTU
+
+Have an interesting use case?
+
+Build something with Deltu and share it.
+
+**Applications · Edge systems · Automation · Infrastructure · Devices · Developer tools**
+
+Open an issue, start a discussion, or submit a pull request.
+
+**DELTU**
+
+> **Make Data Behave.**
