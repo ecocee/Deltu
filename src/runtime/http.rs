@@ -372,10 +372,8 @@ pub async fn serve(config: RuntimeConfig) -> Result<(), String> {
                             action_outcomes: Vec::new(),
                         })
                     } else {
-                        CoreOutcome {
-                            accepted: Vec::new(),
-                            action_outcomes: Vec::new(),
-                        }
+                        let mut core = worker_core.lock().expect("worker poisoned");
+                        core.dispatch_pending(now)
                     };
                     let _ = item.reply.send(outcome);
                 }
