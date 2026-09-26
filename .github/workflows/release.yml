@@ -34,10 +34,11 @@ jobs:
           targets: x86_64-unknown-linux-gnu
       - run: cargo build --release --target x86_64-unknown-linux-gnu
       - run: strip target/x86_64-unknown-linux-gnu/release/deltu
+      - run: mv target/x86_64-unknown-linux-gnu/release/deltu target/x86_64-unknown-linux-gnu/release/deltu-x86_64-unknown-linux-gnu
       - uses: actions/upload-artifact@v4
         with:
           name: deltu-x86_64-unknown-linux-gnu
-          path: target/x86_64-unknown-linux-gnu/release/deltu
+          path: target/x86_64-unknown-linux-gnu/release/deltu-x86_64-unknown-linux-gnu
 
   build-linux-aarch64:
     needs: verify
@@ -51,10 +52,11 @@ jobs:
         run: cargo install cross --locked
       - name: Cross-compile ARM64
         run: cross build --release --target aarch64-unknown-linux-gnu
+      - run: mv target/aarch64-unknown-linux-gnu/release/deltu target/aarch64-unknown-linux-gnu/release/deltu-aarch64-unknown-linux-gnu
       - uses: actions/upload-artifact@v4
         with:
           name: deltu-aarch64-unknown-linux-gnu
-          path: target/aarch64-unknown-linux-gnu/release/deltu
+          path: target/aarch64-unknown-linux-gnu/release/deltu-aarch64-unknown-linux-gnu
 
   build-macos-aarch64:
     needs: verify
@@ -66,10 +68,11 @@ jobs:
           targets: aarch64-apple-darwin
       - run: cargo build --release --target aarch64-apple-darwin
       - run: strip target/aarch64-apple-darwin/release/deltu
+      - run: mv target/aarch64-apple-darwin/release/deltu target/aarch64-apple-darwin/release/deltu-aarch64-apple-darwin
       - uses: actions/upload-artifact@v4
         with:
           name: deltu-aarch64-apple-darwin
-          path: target/aarch64-apple-darwin/release/deltu
+          path: target/aarch64-apple-darwin/release/deltu-aarch64-apple-darwin
 
   publish:
     needs: [build-linux-x86_64, build-linux-aarch64, build-macos-aarch64]

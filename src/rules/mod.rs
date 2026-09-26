@@ -6,6 +6,7 @@
 //! (matches sorted by rule id). No AI, no I/O, no async.
 
 pub mod definition;
+pub mod dsl;
 pub mod error;
 
 use std::collections::HashMap;
@@ -14,7 +15,9 @@ use crate::event::Event;
 use crate::processing::Aggregated;
 use crate::state::StateStore;
 
-pub use definition::{Condition, Field, Literal, OncePerWindow, Operator, Rule, Stat, Trigger};
+pub use definition::{
+    Condition, Field, Literal, OncePerWindow, Operator, Rule, RuleConfig, Stat, Trigger,
+};
 pub use error::RuleConfigError;
 
 /// What the rule engine evaluates: the triggering input (a raw event, a

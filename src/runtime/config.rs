@@ -10,34 +10,70 @@ use crate::processing::PipelineConfig;
 use crate::state::StateConfig;
 
 /// Deltu runtime configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Clone, Serialize)]
 pub struct RuntimeConfig {
     /// HTTP listener settings.
-    #[serde(default)]
     pub http: HttpConfig,
     /// Processing pipeline settings.
-    #[serde(default)]
     pub pipeline: PipelineConfig,
     /// State store settings.
-    #[serde(default)]
     pub state: StateConfig,
     /// Rule definitions.
-    #[serde(default)]
     pub rules: Vec<crate::rules::Rule>,
     /// Action definitions.
-    #[serde(default)]
     pub actions: Vec<ActionDefinition>,
     /// MQTT adapter settings (disabled when `enabled` is false).
-    #[serde(default)]
     pub mqtt: MqttSection,
     /// Optional persistence (snapshots + historical sink). Disabled by
     /// default: the engine runs identically with an absent section.
-    #[serde(default)]
     pub persistence: PersistenceSection,
     /// Bounded work-queue depth between HTTP handlers and the worker.
+    pub queue_capacity: usize,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawRuntimeConfig {
+    #[serde(default)]
+    pub http: HttpConfig,
+    #[serde(default)]
+    pub pipeline: PipelineConfig,
+    #[serde(default)]
+    pub state: StateConfig,
+    #[serde(default)]
+    pub rules: Vec<crate::rules::RuleConfig>,
+    #[serde(default)]
+    pub actions: Vec<ActionDefinition>,
+    #[serde(default)]
+    pub mqtt: MqttSection,
+    #[serde(default)]
+    pub persistence: PersistenceSection,
     #[serde(default = "default_queue_capacity")]
     pub queue_capacity: usize,
+}
+
+impl<'de> Deserialize<'de> for RuntimeConfig {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let raw = RawRuntimeConfig::deserialize(deserializer)?;
+        let mut compiled_rules = Vec::with_capacity(raw.rules.len());
+        for rule_cfg in raw.rules {
+            let rule = rule_cfg.compile().map_err(serde::de::Error::custom)?;
+            compiled_rules.push(rule);
+        }
+        Ok(RuntimeConfig {
+            http: raw.http,
+            pipeline: raw.pipeline,
+            state: raw.state,
+            rules: compiled_rules,
+            actions: raw.actions,
+            mqtt: raw.mqtt,
+            persistence: raw.persistence,
+            queue_capacity: raw.queue_capacity,
+        })
+    }
 }
 
 /// Persistence section (spec 12): strictly opt-in; absent or `enabled:
