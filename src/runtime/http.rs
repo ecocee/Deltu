@@ -257,6 +257,11 @@ pub(crate) struct AppState {
     pub max_batch: usize,
     /// Persistence counters (zeroed when persistence is disabled).
     pub persistence_counters: Arc<crate::persistence::PersistenceCounters>,
+    /// The runtime scheduler instance.
+    pub scheduler: Arc<tokio::sync::Mutex<crate::runtime::scheduler::Scheduler>>,
+    /// Optional path for schedule snapshots; `None` disables schedule
+    /// persistence (schedules then live for the process lifetime only).
+    pub scheduler_snapshot_path: Option<String>,
 }
 
 /// Queue depth: the sender cannot observe the channel's internal length,
@@ -334,6 +339,150 @@ pub(crate) async fn get_metrics(State(app): State<AppState>) -> String {
     )
 }
 
+/// `GET /v1/schedules`: every registered schedule with status + next run.
+pub(crate) async fn get_schedules(State(app): State<AppState>) -> Json<JsonValue> {
+    let scheduler = app.scheduler.lock().await;
+    let schedules = scheduler.snapshot();
+    Json(json!({
+        "success": true,
+        "data": {
+            "schedules": schedules,
+            "active_count": schedules.iter().filter(|s| s.running).count(),
+            "last_error": scheduler.last_error(),
+        }
+    }))
+}
+
+/// `POST /v1/schedules`: add or replace (upsert) one schedule. Validation
+/// errors return 400 with the documented envelope; an invalid body never
+/// touches an existing schedule with the same id.
+pub(crate) async fn post_schedule(
+    State(app): State<AppState>,
+    body: axum::body::Bytes,
+) -> Result<(StatusCode, Json<JsonValue>), (StatusCode, Json<JsonValue>)> {
+    let config: crate::runtime::scheduler::ScheduleConfig =
+        serde_json::from_slice(&body).map_err(|error| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(error_body(
+                    "invalid_schedule",
+                    format!("request body is not a valid schedule: {error}"),
+                )),
+            )
+        })?;
+    let mut scheduler = app.scheduler.lock().await;
+    match scheduler.add(config) {
+        Ok(()) => {
+            persist_schedules(&app).await;
+            Ok((
+                StatusCode::CREATED,
+                Json(json!({ "success": true, "data": { "created": true } })),
+            ))
+        }
+        Err(error) => Err((
+            StatusCode::BAD_REQUEST,
+            Json(error_body("invalid_schedule", error)),
+        )),
+    }
+}
+
+/// `GET /v1/schedules/:id`: one schedule's status (404 when unknown).
+pub(crate) async fn get_schedule(
+    State(app): State<AppState>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Result<Json<JsonValue>, (StatusCode, Json<JsonValue>)> {
+    let scheduler = app.scheduler.lock().await;
+    match scheduler.snapshot().into_iter().find(|s| s.config.id == id) {
+        Some(status) => Ok(Json(json!({ "success": true, "data": status }))),
+        None => Err((
+            StatusCode::NOT_FOUND,
+            Json(error_body("schedule_not_found", format!("no schedule with id {id:?}"))),
+        )),
+    }
+}
+
+/// `DELETE /v1/schedules/:id`: stop and delete. Idempotent.
+pub(crate) async fn delete_schedule(
+    State(app): State<AppState>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Json<JsonValue> {
+    let mut scheduler = app.scheduler.lock().await;
+    scheduler.remove(&id);
+    persist_schedules(&app).await;
+    Json(json!({ "success": true, "data": { "deleted": true } }))
+}
+
+/// `POST /v1/schedules/:id/start`: enable a disabled schedule.
+pub(crate) async fn start_schedule(
+    State(app): State<AppState>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Result<Json<JsonValue>, (StatusCode, Json<JsonValue>)> {
+    let mut scheduler = app.scheduler.lock().await;
+    match scheduler.set_enabled(&id, true) {
+        Ok(true) => {
+            persist_schedules(&app).await;
+            Ok(Json(json!({ "success": true, "data": { "running": true } })))
+        }
+        Ok(false) => Err((
+            StatusCode::NOT_FOUND,
+            Json(error_body("schedule_not_found", format!("no schedule with id {id:?}"))),
+        )),
+        Err(error) => Err((
+            StatusCode::BAD_REQUEST,
+            Json(error_body("invalid_schedule", error)),
+        )),
+    }
+}
+
+/// `POST /v1/schedules/:id/stop`: disable (keep registered, stop firing).
+pub(crate) async fn stop_schedule(
+    State(app): State<AppState>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Result<Json<JsonValue>, (StatusCode, Json<JsonValue>)> {
+    let mut scheduler = app.scheduler.lock().await;
+    match scheduler.set_enabled(&id, false) {
+        Ok(true) => {
+            persist_schedules(&app).await;
+            Ok(Json(json!({ "success": true, "data": { "running": false } })))
+        }
+        Ok(false) => Err((
+            StatusCode::NOT_FOUND,
+            Json(error_body("schedule_not_found", format!("no schedule with id {id:?}"))),
+        )),
+        Err(error) => Err((
+            StatusCode::BAD_REQUEST,
+            Json(error_body("invalid_schedule", error)),
+        )),
+    }
+}
+
+/// `POST /v1/schedules/:id/trigger`: fire once, out of band, now.
+pub(crate) async fn trigger_schedule(
+    State(app): State<AppState>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Result<Json<JsonValue>, (StatusCode, Json<JsonValue>)> {
+    let mut scheduler = app.scheduler.lock().await;
+    match scheduler.trigger_now(&id) {
+        Ok(()) => Ok(Json(json!({ "success": true, "data": { "triggered": true } }))),
+        Err(error) => Err((
+            StatusCode::NOT_FOUND,
+            Json(error_body("schedule_not_found", error)),
+        )),
+    }
+}
+
+/// Best-effort persistence after mutations. Failures surface in
+/// `/v1/status` (scheduler.last_error) — never in the HTTP response path
+/// (a failed snapshot must not fail the mutation; invariant 8).
+async fn persist_schedules(app: &AppState) {
+    if let Some(path) = app.scheduler_snapshot_path.clone() {
+        let scheduler = app.scheduler.lock().await;
+        if let Err(error) = scheduler.save(&path) {
+            eprintln!("deltu: schedule snapshot failed: {error}");
+        }
+    }
+}
+
 /// Builds the axum router with documented routes and the body-size guard.
 pub(crate) fn router(app: AppState, max_body_bytes: usize) -> axum::Router {
     use axum::extract::DefaultBodyLimit;
@@ -344,6 +493,17 @@ pub(crate) fn router(app: AppState, max_body_bytes: usize) -> axum::Router {
         .route("/health", get(get_health))
         .route("/v1/status", get(get_status))
         .route("/metrics", get(get_metrics))
+        .route(
+            "/v1/schedules",
+            get(get_schedules).post(post_schedule),
+        )
+        .route(
+            "/v1/schedules/{id}",
+            get(get_schedule).delete(delete_schedule),
+        )
+        .route("/v1/schedules/{id}/start", post(start_schedule))
+        .route("/v1/schedules/{id}/stop", post(stop_schedule))
+        .route("/v1/schedules/{id}/trigger", post(trigger_schedule))
         .layer(DefaultBodyLimit::max(max_body_bytes))
         .with_state(app)
 }
@@ -359,6 +519,7 @@ pub async fn serve(config: RuntimeConfig) -> Result<(), String> {
         actions,
         mqtt,
         persistence,
+        scheduler: scheduler_cfg,
         queue_capacity,
     } = config;
 
@@ -490,15 +651,47 @@ pub async fn serve(config: RuntimeConfig) -> Result<(), String> {
         mqtt_handle = Some(handle);
     }
 
+    // Scheduler: restored configs spawn tasks now; the queue-sender clone
+    // is held by the scheduler, so it must be dropped before shutdown can
+    // drain the channel (same contract as the MQTT adapter above).
+    let mut scheduler = crate::runtime::scheduler::Scheduler::new(queue.clone());
+    let scheduler_snapshot_path = scheduler_cfg.snapshot_path.clone();
+    if scheduler_cfg.enabled {
+        if let Some(path) = &scheduler_snapshot_path {
+            match crate::runtime::scheduler::Scheduler::restore(path) {
+                Ok(configs) => {
+                    let count = configs.len();
+                    for schedule_config in configs {
+                        if let Err(error) = scheduler.add(schedule_config) {
+                            eprintln!("deltu: restored schedule rejected: {error}");
+                        }
+                    }
+                    if count > 0 {
+                        eprintln!("deltu: restored {count} schedule(s) from {path}");
+                    }
+                }
+                Err(error) => eprintln!("deltu: schedule restore failed: {error}"),
+            }
+        }
+        for schedule_config in &scheduler_cfg.schedules {
+            if let Err(error) = scheduler.add(schedule_config.clone()) {
+                eprintln!("deltu: configured schedule rejected: {error}");
+            }
+        }
+    }
+    let scheduler_handle = Arc::new(tokio::sync::Mutex::new(scheduler));
+
     let app_state = AppState {
         core: core.clone(),
-        queue,
+        queue: queue.clone(),
         queue_capacity,
         mqtt_counters,
         metrics: Arc::new(std::sync::Mutex::new(crate::metrics::MetricsRegistry::new())),
         started: Arc::new(std::time::Instant::now()),
         max_batch: http.max_batch,
         persistence_counters: persistence_counters.clone(),
+        scheduler: scheduler_handle.clone(),
+        scheduler_snapshot_path: scheduler_cfg.snapshot_path.clone(),
     };
     let app = router(app_state, http.max_body_bytes);
 
@@ -535,6 +728,14 @@ pub async fn serve(config: RuntimeConfig) -> Result<(), String> {
     if let Some(handle) = mqtt_handle {
         handle.abort();
     }
+    // Persist schedules before their tasks are torn down with the runtime.
+    if let Some(path) = &scheduler_snapshot_path {
+        let scheduler = scheduler_handle.lock().await;
+        if let Err(error) = scheduler.save(path) {
+            eprintln!("deltu: schedule snapshot on shutdown failed: {error}");
+        }
+    }
+    drop(scheduler_handle);
     drop(core);
     let _ = worker.await;
     Ok(())

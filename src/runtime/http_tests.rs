@@ -35,6 +35,7 @@ fn test_state(
     .unwrap();
     let core = Arc::new(Mutex::new(EngineCore::new(pipeline, state, rules, actions)));
     let (tx, rx) = tokio::sync::mpsc::channel(queue_capacity);
+    let scheduler = crate::runtime::scheduler::Scheduler::new(Arc::new(tx.clone()));
     (
         AppState {
             core,
@@ -45,6 +46,8 @@ fn test_state(
             started: Arc::new(Instant::now()),
             max_batch,
             persistence_counters: Arc::new(crate::persistence::PersistenceCounters::default()),
+            scheduler: Arc::new(tokio::sync::Mutex::new(scheduler)),
+            scheduler_snapshot_path: None,
         },
         rx,
     )
@@ -250,6 +253,254 @@ async fn queue_full_returns_429() {
     assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "body: {body}");
 
     first.abort(); // first request never resolves without a worker
+}
+
+/// A valid interval-schedule POST body.
+fn interval_body(id: &str) -> String {
+    serde_json::json!({
+        "id": id,
+        "spec": { "type": "interval", "unit": "minutes", "every": 30 },
+        "timezone": "Asia/Kolkata",
+        "payload": { "flow": "nightly-sync" }
+    })
+    .to_string()
+}
+
+#[tokio::test]
+async fn schedule_crud_round_trip() {
+    let (state, _rx) = test_state(10, 100);
+    let a = app(state);
+
+    // create
+    let (status, body) = send(a.clone(), "POST", "/v1/schedules", Some(interval_body("nightly"))).await;
+    assert_eq!(status, StatusCode::CREATED, "body: {body}");
+
+    // list shows it with next-run info
+    let (status, body) = send(a.clone(), "GET", "/v1/schedules", None).await;
+    assert_eq!(status, StatusCode::OK);
+    let schedules = body["data"]["schedules"].as_array().unwrap();
+    assert_eq!(schedules.len(), 1);
+    assert_eq!(schedules[0]["config"]["id"], "nightly");
+    assert!(schedules[0]["next_run_ms"].as_i64().is_some(), "next run exposed");
+    assert_eq!(schedules[0]["running"], true);
+    assert_eq!(body["data"]["active_count"], 1);
+
+    // single get
+    let (status, body) = send(a.clone(), "GET", "/v1/schedules/nightly", None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["data"]["config"]["spec"]["type"], "interval");
+
+    // stop → running=false, next_run hidden
+    let (status, body) = send(a.clone(), "POST", "/v1/schedules/nightly/stop", None).await;
+    assert_eq!(status, StatusCode::OK, "body: {body}");
+    assert_eq!(body["data"]["running"], false);    let (status, body) = send(a.clone(), "GET", "/v1/schedules/nightly", None).await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert!(body["data"]["next_run_ms"].is_null(), "stopped schedule has no next run");
+
+    // start → running=true again
+    let (status, _body) = send(a.clone(), "POST", "/v1/schedules/nightly/start", None).await;
+    assert_eq!(status, StatusCode::OK);    let (status, body) = send(a.clone(), "GET", "/v1/schedules/nightly", None).await;
+
+    assert_eq!(body["data"]["running"], true);
+
+    // delete
+    let (status, _body) = send(a.clone(), "DELETE", "/v1/schedules/nightly", None).await;
+    assert_eq!(status, StatusCode::OK);
+    let (_status, body) = send(a, "GET", "/v1/schedules", None).await;
+    assert_eq!(body["data"]["schedules"].as_array().unwrap().len(), 0);
+}
+
+#[tokio::test]
+async fn schedule_validation_errors_are_documented_envelopes() {
+    let (state, _rx) = test_state(10, 100);
+    let a = app(state);
+
+    // bad timezone
+    let bad_tz = serde_json::json!({
+        "id": "x",
+        "spec": { "type": "daily", "time": "09:00" },
+        "timezone": "Mars/Olympus"
+    })
+    .to_string();
+    let (status, body) = send(a.clone(), "POST", "/v1/schedules", Some(bad_tz)).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body["error"]["code"], "invalid_schedule");
+
+    // malformed body
+    let (status, body) = send(a, "POST", "/v1/schedules", Some("{nope".into())).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body["error"]["code"], "invalid_schedule");
+}
+
+#[tokio::test]
+async fn schedule_unknown_id_returns_404() {
+    let (state, _rx) = test_state(10, 100);
+    let a = app(state);
+    let (status, body) = send(a.clone(), "GET", "/v1/schedules/ghost", None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(body["error"]["code"], "schedule_not_found");
+    let (status, _body) = send(a.clone(), "POST", "/v1/schedules/ghost/stop", None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, _body) = send(a.clone(), "POST", "/v1/schedules/ghost/start", None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, _body) = send(a, "POST", "/v1/schedules/ghost/trigger", None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn schedule_trigger_now_enqueues_real_event() {
+    let (state, mut rx) = test_state(10, 100);
+    let a = app(state);
+
+    let (status, _body) = send(a.clone(), "POST", "/v1/schedules", Some(interval_body("tick"))).await;
+    assert_eq!(status, StatusCode::CREATED);
+
+    let (status, _body) = send(a.clone(), "POST", "/v1/schedules/tick/trigger", None).await;
+    assert_eq!(status, StatusCode::OK);
+
+    // The manual trigger delivers an event through the queue with the
+    // manual flag set.
+    let item = tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv())
+        .await
+        .expect("manual trigger must enqueue an event")
+        .expect("queue closed");
+    let event = &item.events[0];
+    assert_eq!(event.kind, "schedule.fired");
+    match &event.payload {
+        crate::event::Payload::Json { value } => {
+            assert_eq!(value["manual"], true);
+            assert_eq!(value["flow"], "nightly-sync");
+        }
+        other => panic!("expected json payload, got {other:?}"),
+    }
+    let _ = item.reply.send(CoreOutcome {
+        accepted: vec![true],
+        action_outcomes: vec![],
+    });
+
+    // Status reflects the manual firing.
+    let (status, body) = send(a, "GET", "/v1/schedules/tick", None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body["data"]["last_fired_ms"].as_i64().is_some());
+    assert_eq!(body["data"]["fired_count"].as_u64().unwrap(), 1);
+}
+
+#[tokio::test]
+async fn schedule_interval_task_fires_real_event_through_queue() {
+    // End-to-end: a 1-second interval schedule must deliver a real event
+    // with kind `schedule.fired` through the same bounded queue as HTTP
+    // ingestion — no heartbeat, no polling.
+    let (state, mut rx) = test_state(10, 100);
+    let a = app(state);
+
+    let body = serde_json::json!({
+        "id": "fast",
+        "spec": { "type": "interval", "unit": "seconds", "every": 1 },
+        "timezone": "UTC",
+        "payload": { "hello": "world" }
+    })
+    .to_string();
+    let (status, _body) = send(a, "POST", "/v1/schedules", Some(body)).await;
+    assert_eq!(status, StatusCode::CREATED);
+
+    let item = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
+        .await
+        .expect("schedule did not fire within 5s")
+        .expect("queue closed");
+    assert_eq!(item.events.len(), 1);
+    let event = &item.events[0];
+    assert_eq!(event.kind, "schedule.fired");
+    assert_eq!(event.source, "deltu://scheduler");
+    assert!(event.id.starts_with("sched-fast-"));
+    let payload = match &event.payload {
+        crate::event::Payload::Json { value } => value.clone(),
+        other => panic!("expected json payload, got {other:?}"),
+    };
+    assert_eq!(payload["hello"], "world");
+    let _ = item.reply.send(CoreOutcome {
+        accepted: vec![true],
+        action_outcomes: vec![],
+    });
+}
+
+#[tokio::test]
+async fn stopped_schedule_never_fires() {
+    let (state, mut rx) = test_state(10, 100);
+    // Keep a sender alive: once the router state is consumed the channel
+    // would otherwise close and end the wait early.
+    let keep_alive = state.queue.clone();
+    let a = app(state);
+
+    // Created disabled: no task ever spawns.
+    let body = serde_json::json!({
+        "id": "paused",
+        "spec": { "type": "interval", "unit": "seconds", "every": 1 },
+        "timezone": "UTC",
+        "enabled": false
+    })
+    .to_string();
+    let (status, _body) = send(a.clone(), "POST", "/v1/schedules", Some(body)).await;
+    assert_eq!(status, StatusCode::CREATED);
+
+    // A started-then-stopped schedule with a 1-hour cadence cannot fire
+    // between the two calls; after stop, nothing may arrive either.
+    let body = serde_json::json!({
+        "id": "hourly",
+        "spec": { "type": "interval", "unit": "hours", "every": 1 },
+        "timezone": "UTC"
+    })
+    .to_string();
+    let (status, _body) = send(a.clone(), "POST", "/v1/schedules", Some(body)).await;
+    assert_eq!(status, StatusCode::CREATED);
+    let (status, body) = send(a, "POST", "/v1/schedules/hourly/stop", None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["data"]["running"], false);
+
+    // Nothing arrives: the disabled schedules never spawn tasks.
+    let nothing = tokio::time::timeout(std::time::Duration::from_millis(1_500), rx.recv()).await;
+    assert!(nothing.is_err(), "stopped schedule fired");
+    drop(keep_alive);
+}
+
+#[tokio::test]
+async fn multiple_schedules_run_independently() {
+    let (state, mut rx) = test_state(10, 100);
+    let a = app(state);
+
+    for id in ["one", "two"] {
+        let body = serde_json::json!({
+            "id": id,
+            "spec": { "type": "interval", "unit": "seconds", "every": 1 },
+            "timezone": "UTC"
+        })
+        .to_string();
+        let (status, _body) = send(a.clone(), "POST", "/v1/schedules", Some(body)).await;
+        assert_eq!(status, StatusCode::CREATED);
+    }
+
+    let mut seen = std::collections::HashSet::new();
+    for _ in 0..2 {
+        let item = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
+            .await
+            .expect("schedule did not fire")
+            .expect("queue closed");
+        let event = &item.events[0];
+        assert_eq!(event.kind, "schedule.fired");
+        seen.insert(
+            event
+                .id
+                .strip_prefix("sched-")
+                .and_then(|rest| rest.rsplit_once('-').map(|(id, _)| id.to_string()))
+                .unwrap_or_default(),
+        );
+        let _ = item.reply.send(CoreOutcome {
+            accepted: vec![true],
+            action_outcomes: vec![],
+        });
+    }
+    assert!(seen.contains("one"), "both schedules fired independently: {seen:?}");
+    assert!(seen.contains("two"), "both schedules fired independently: {seen:?}");
 }
 
 #[tokio::test]

@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use crate::actions::{ActionConfigError, ActionDefinition};
 use crate::input::mqtt::MqttConfig;
 use crate::processing::PipelineConfig;
+use crate::runtime::scheduler::ScheduleConfig;
 use crate::state::StateConfig;
 
 /// Deltu runtime configuration.
@@ -27,6 +28,9 @@ pub struct RuntimeConfig {
     /// Optional persistence (snapshots + historical sink). Disabled by
     /// default: the engine runs identically with an absent section.
     pub persistence: PersistenceSection,
+    /// Time-based schedules (the runtime scheduler). Disabled by default:
+    /// an absent section registers no schedules.
+    pub scheduler: SchedulerSection,
     /// Bounded work-queue depth between HTTP handlers and the worker.
     pub queue_capacity: usize,
 }
@@ -48,6 +52,8 @@ struct RawRuntimeConfig {
     pub mqtt: MqttSection,
     #[serde(default)]
     pub persistence: PersistenceSection,
+    #[serde(default)]
+    pub scheduler: SchedulerSection,
     #[serde(default = "default_queue_capacity")]
     pub queue_capacity: usize,
 }
@@ -71,6 +77,7 @@ impl<'de> Deserialize<'de> for RuntimeConfig {
             actions: raw.actions,
             mqtt: raw.mqtt,
             persistence: raw.persistence,
+            scheduler: raw.scheduler,
             queue_capacity: raw.queue_capacity,
         })
     }
@@ -123,6 +130,57 @@ fn default_queue_capacity() -> usize {
     1_000
 }
 
+/// Scheduler section: config-file schedules plus snapshot persistence for
+/// API-created schedules. Disabled by default (no schedules, no snapshot
+/// file) — the engine behaves exactly as before when the section is absent.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct SchedulerSection {
+    /// Enable the scheduler. Default false (no tasks spawn, /v1/schedules
+    /// still exists and returns an empty list).
+    #[serde(default)]
+    pub enabled: bool,
+    /// Schedules loaded at startup (same schema as the POST body).
+    #[serde(default)]
+    pub schedules: Vec<ScheduleConfig>,
+    /// Snapshot file for API-created schedules. Restored on startup and
+    /// rewritten after every mutation (temp + rename, crash-consistent).
+    #[serde(default)]
+    pub snapshot_path: Option<String>,
+}
+
+impl SchedulerSection {
+    /// Validates every configured schedule and id uniqueness. Used by
+    /// `RuntimeConfig::validate` so `deltu check` covers schedules too.
+    pub fn validate(&self) -> Result<(), ConfigError> {
+        if !self.enabled && (!self.schedules.is_empty() || self.snapshot_path.is_some()) {
+            return Err(ConfigError::Validation(
+                "scheduler.schedules/scheduler.snapshot_path require scheduler.enabled = true".into(),
+            ));
+        }
+        let mut seen = std::collections::HashSet::new();
+        for config in &self.schedules {
+            config
+                .validate()
+                .map_err(|e| ConfigError::Validation(format!("scheduler: schedule {:?}: {e}", config.id)))?;
+            if !seen.insert(config.id.trim().to_string()) {
+                return Err(ConfigError::Validation(format!(
+                    "scheduler: duplicate schedule id {}",
+                    config.id
+                )));
+            }
+        }
+        if let Some(path) = &self.snapshot_path
+            && path.trim().is_empty()
+        {
+            return Err(ConfigError::Validation(
+                "scheduler.snapshot_path must not be empty when set".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
 impl Default for RuntimeConfig {
     fn default() -> Self {
         Self {
@@ -133,6 +191,7 @@ impl Default for RuntimeConfig {
             actions: Vec::new(),
             mqtt: MqttSection::default(),
             persistence: PersistenceSection::default(),
+            scheduler: SchedulerSection::default(),
             queue_capacity: default_queue_capacity(),
         }
     }
@@ -254,6 +313,7 @@ impl RuntimeConfig {
                 "persistence.snapshot_interval_secs must be > 0".into(),
             ));
         }
+        self.scheduler.validate()?;
 
         // Rule + action validation happens through the engines at build
         // time; here we validate referential integrity and id uniqueness.
@@ -381,6 +441,7 @@ impl RuntimeConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::runtime::scheduler::ScheduleSpec;
 
     #[test]
     fn persistence_disabled_by_default_and_validated_when_enabled() {
@@ -466,6 +527,66 @@ mod tests {
             .apply_env_overrides(&[("DELTU_HTTP_BIND".to_string(), "no-port-here".to_string())])
             .unwrap(); // override applies
         assert!(config.validate().is_err());
+    }
+
+    fn schedule(id: &str) -> ScheduleConfig {
+        ScheduleConfig {
+            id: id.to_string(),
+            spec: ScheduleSpec::Daily { time: "09:00".into() },
+            timezone: "UTC".into(),
+            payload: serde_json::json!({}),
+            missed_policy: Default::default(),
+            overlap_policy: Default::default(),
+            not_before_ms: None,
+            not_after_ms: None,
+            enabled: true,
+        }
+    }
+
+    #[test]
+    fn scheduler_section_defaults_to_disabled_and_validates_when_enabled() {
+        let config = RuntimeConfig::default();
+        config.validate().unwrap(); // absent section: valid
+
+        let mut enabled = RuntimeConfig::default();
+        enabled.scheduler = SchedulerSection {
+            enabled: true,
+            schedules: vec![schedule("daily-sync")],
+            snapshot_path: Some("/tmp/deltu-schedules.json".into()),
+        };
+        enabled.validate().unwrap();
+
+        // schedules present but section disabled: rejected
+        let mut inconsistent = RuntimeConfig::default();
+        inconsistent.scheduler = SchedulerSection {
+            enabled: false,
+            schedules: vec![schedule("daily-sync")],
+            snapshot_path: None,
+        };
+        assert!(inconsistent.validate().is_err());
+
+        // duplicate ids rejected
+        let mut dup = RuntimeConfig::default();
+        dup.scheduler = SchedulerSection {
+            enabled: true,
+            schedules: vec![schedule("x"), schedule("x")],
+            snapshot_path: None,
+        };
+        assert!(dup.validate().is_err());
+    }
+
+    #[test]
+    fn scheduler_section_parses_from_yaml() {
+        let yaml = "scheduler:\n  enabled: true\n  schedules:\n    - id: nightly\n      spec:\n        type: daily\n        time: \"23:30\"\n      timezone: Asia/Kolkata\n      payload:\n        flow: nightly-sync\n";
+        let config: RuntimeConfig = serde_yaml::from_str(yaml).unwrap();
+        assert!(config.scheduler.enabled);
+        assert_eq!(config.scheduler.schedules.len(), 1);
+        assert_eq!(config.scheduler.schedules[0].id, "nightly");
+        assert_eq!(
+            config.scheduler.schedules[0].spec,
+            ScheduleSpec::Daily { time: "23:30".into() }
+        );
+        config.validate().unwrap();
     }
 
     #[test]
