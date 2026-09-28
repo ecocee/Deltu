@@ -293,14 +293,16 @@ async fn schedule_crud_round_trip() {
     // stop → running=false, next_run hidden
     let (status, body) = send(a.clone(), "POST", "/v1/schedules/nightly/stop", None).await;
     assert_eq!(status, StatusCode::OK, "body: {body}");
-    assert_eq!(body["data"]["running"], false);    let (status, body) = send(a.clone(), "GET", "/v1/schedules/nightly", None).await;
+    assert_eq!(body["data"]["running"], false);
+    let (status, body) = send(a.clone(), "GET", "/v1/schedules/nightly", None).await;
 
     assert_eq!(status, StatusCode::OK);
     assert!(body["data"]["next_run_ms"].is_null(), "stopped schedule has no next run");
 
     // start → running=true again
     let (status, _body) = send(a.clone(), "POST", "/v1/schedules/nightly/start", None).await;
-    assert_eq!(status, StatusCode::OK);    let (status, body) = send(a.clone(), "GET", "/v1/schedules/nightly", None).await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, body) = send(a.clone(), "GET", "/v1/schedules/nightly", None).await;
 
     assert_eq!(body["data"]["running"], true);
 

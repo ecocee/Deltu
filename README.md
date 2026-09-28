@@ -233,11 +233,22 @@ cargo run --release -- run
 **Docker**
 
 ```bash
-docker build -t deltu:local .
+docker pull ghcr.io/ecocee/deltu:1.0.0
 
 docker run -d \
   -p 8080:8080 \
-  deltu:local run
+  ghcr.io/ecocee/deltu:1.0.0 run
+```
+
+**Docker Compose**
+
+```yaml
+services:
+  deltu:
+    image: ghcr.io/ecocee/deltu:1.0.0
+    ports:
+      - "8080:8080"
+    command: ["run"]
 ```
 
 ### 2. Check the engine

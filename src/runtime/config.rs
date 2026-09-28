@@ -415,10 +415,100 @@ impl RuntimeConfig {
                     }
                     self.queue_capacity = parsed;
                 }
+                "DELTU_MERO_BRIDGE_URL" | "DELTU_MERO_BRIDGE_SECRET" => {
+                    // Re-resolve both keys against the full override set so
+                    // they may arrive in any order (the CLI hands us the
+                    // complete `DELTU_*` environment per invocation).
+                    let url = vars
+                        .iter()
+                        .rev()
+                        .find(|(k, _)| k.as_str() == "DELTU_MERO_BRIDGE_URL")
+                        .map(|(_, v)| v.clone())
+                        .or_else(|| self.mero_bridge_url());
+                    let secret = vars
+                        .iter()
+                        .rev()
+                        .find(|(k, _)| k.as_str() == "DELTU_MERO_BRIDGE_SECRET")
+                        .map(|(_, v)| v.clone())
+                        .or_else(|| self.mero_bridge_secret());
+                    self.apply_mero_bridge_overrides(url, secret);
+                }
                 _ => {}
             }
         }
         Ok(())
+    }
+
+    /// The `mero-bridge` webhook action's URL, if configured.
+    fn mero_bridge_url(&self) -> Option<String> {
+        self.mero_bridge_webhook().map(|(url, _)| url)
+    }
+
+    /// The `mero-bridge` webhook action's bearer secret, if configured.
+    fn mero_bridge_secret(&self) -> Option<String> {
+        self.mero_bridge_webhook().and_then(|(_, secret)| secret)
+    }
+
+    /// Finds the `mero-bridge` webhook action (the documented Deltu → Mero
+    /// bridge; see docs/MERO_DELTU_PROTOCOL.md) and returns its URL plus
+    /// the bearer token from its `authorization` header.
+    fn mero_bridge_webhook(&self) -> Option<(String, Option<String>)> {
+        for definition in &self.actions {
+            if definition.id != "mero-bridge" {
+                continue;
+            }
+            if let crate::actions::ActionKind::Webhook { webhook } = &definition.kind {
+                let secret = webhook
+                    .headers
+                    .iter()
+                    .find(|header| header.name.eq_ignore_ascii_case("authorization"))
+                    .and_then(|header| header.value.strip_prefix("Bearer "))
+                    .map(|token| token.trim().to_string());
+                return Some((webhook.url.clone(), secret));
+            }
+        }
+        None
+    }
+
+    /// Points the `mero-bridge` webhook at `url` and sends
+    /// `authorization: Bearer <secret>`, both sourced from the
+    /// `DELTU_MERO_BRIDGE_URL` / `DELTU_MERO_BRIDGE_SECRET` environment
+    /// overrides. Secrets never live in checked-in config files: the
+    /// placeholder in a repo config stays inert until an operator (or the
+    /// compose stack) exports the real secret. An empty secret removes the
+    /// header; a missing `mero-bridge` action is a no-op.
+    fn apply_mero_bridge_overrides(&mut self, url: Option<String>, secret: Option<String>) {
+        for definition in &mut self.actions {
+            if definition.id != "mero-bridge" {
+                continue;
+            }
+            if let crate::actions::ActionKind::Webhook { webhook } = &mut definition.kind {
+                if let Some(url) = &url {
+                    webhook.url = url.clone();
+                }
+                if let Some(secret) = &secret {
+                    if secret.is_empty() {
+                        webhook
+                            .headers
+                            .retain(|header| !header.name.eq_ignore_ascii_case("authorization"));
+                    } else {
+                        match webhook
+                            .headers
+                            .iter_mut()
+                            .find(|header| header.name.eq_ignore_ascii_case("authorization"))
+                        {
+                            Some(header) => header.value = format!("Bearer {secret}"),
+                            None => webhook
+                                .headers
+                                .push(crate::actions::WebhookHeader {
+                                    name: "authorization".to_string(),
+                                    value: format!("Bearer {secret}"),
+                                }),
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// Converts action definitions into the dispatcher's expected form,
@@ -527,6 +617,96 @@ mod tests {
             .apply_env_overrides(&[("DELTU_HTTP_BIND".to_string(), "no-port-here".to_string())])
             .unwrap(); // override applies
         assert!(config.validate().is_err());
+    }
+
+    fn webhook_action(id: &str, url: &str, auth: Option<&str>) -> ActionDefinition {
+        ActionDefinition {
+            id: id.to_string(),
+            kind: crate::actions::ActionKind::Webhook {
+                webhook: crate::actions::WebhookConfig {
+                    url: url.to_string(),
+                    method: Default::default(),
+                    headers: auth
+                        .map(|value| {
+                            vec![crate::actions::WebhookHeader {
+                                name: "authorization".to_string(),
+                                value: value.to_string(),
+                            }]
+                        })
+                        .unwrap_or_default(),
+                    timeout_ms: 3_000,
+                },
+            },
+        }
+    }
+
+    #[test]
+    fn mero_bridge_env_overrides_patch_url_and_secret() {
+        let mut config = RuntimeConfig::default();
+        config.actions = vec![webhook_action(
+            "mero-bridge",
+            "http://127.0.0.1:8000/api/deltu/webhook",
+            Some("Bearer replace-with-DELTU_WEBHOOK_SECRET"),
+        )];
+
+        // Both keys at once, in reverse declaration order — order must not
+        // matter because the bridge is re-resolved from the full set.
+        config
+            .apply_env_overrides(&[
+                ("DELTU_MERO_BRIDGE_SECRET".to_string(), "s3cret".to_string()),
+                (
+                    "DELTU_MERO_BRIDGE_URL".to_string(),
+                    "http://api:8000/deltu/schedules/fired".to_string(),
+                ),
+            ])
+            .unwrap();
+
+        let crate::actions::ActionKind::Webhook { webhook } = &config.actions[0].kind else {
+            panic!("expected webhook action");
+        };
+        assert_eq!(webhook.url, "http://api:8000/deltu/schedules/fired");
+        assert_eq!(webhook.headers[0].value, "Bearer s3cret");
+    }
+
+    #[test]
+    fn mero_bridge_env_overrides_leave_other_actions_alone() {
+        let mut config = RuntimeConfig::default();
+        config.actions = vec![webhook_action("other-hook", "http://example.test/hook", None)];
+
+        config
+            .apply_env_overrides(&[
+                (
+                    "DELTU_MERO_BRIDGE_URL".to_string(),
+                    "http://api:8000/deltu/schedules/fired".to_string(),
+                ),
+                ("DELTU_MERO_BRIDGE_SECRET".to_string(), "s3cret".to_string()),
+            ])
+            .unwrap();
+
+        let crate::actions::ActionKind::Webhook { webhook } = &config.actions[0].kind else {
+            panic!("expected webhook action");
+        };
+        assert_eq!(webhook.url, "http://example.test/hook");
+        assert!(webhook.headers.is_empty());
+    }
+
+    #[test]
+    fn mero_bridge_empty_secret_removes_auth_header() {
+        let mut config = RuntimeConfig::default();
+        config.actions = vec![webhook_action(
+            "mero-bridge",
+            "http://api:8000/deltu/schedules/fired",
+            Some("Bearer stale".to_string().as_str()),
+        )];
+
+        config
+            .apply_env_overrides(&[("DELTU_MERO_BRIDGE_SECRET".to_string(), String::new())])
+            .unwrap();
+
+        let crate::actions::ActionKind::Webhook { webhook } = &config.actions[0].kind else {
+            panic!("expected webhook action");
+        };
+        assert!(webhook.headers.is_empty());
     }
 
     fn schedule(id: &str) -> ScheduleConfig {
