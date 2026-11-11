@@ -262,6 +262,10 @@ pub(crate) struct AppState {
     /// Optional path for schedule snapshots; `None` disables schedule
     /// persistence (schedules then live for the process lifetime only).
     pub scheduler_snapshot_path: Option<String>,
+    /// Optional API key / bearer token. When set, non-health routes require authentication.
+    pub api_key: Option<String>,
+    /// Fast non-autoregressive decision engine.
+    pub decision_engine: Arc<crate::decision::DecisionEngine>,
 }
 
 /// Queue depth: the sender cannot observe the channel's internal length,
@@ -276,7 +280,9 @@ fn queue_depth_snapshot(app: &AppState) -> usize {
 }
 
 /// `GET /metrics`: Prometheus-compatible metrics endpoint.
-pub(crate) async fn get_metrics(State(app): State<AppState>) -> String {
+pub(crate) async fn get_metrics(
+    State(app): State<AppState>,
+) -> ([(axum::http::header::HeaderName, &'static str); 1], String) {
     let (events_total, events_per_sec) = if let Ok(mut metrics) = app.metrics.lock() {
         (
             metrics.events_total.total_events(),
@@ -303,7 +309,7 @@ pub(crate) async fn get_metrics(State(app): State<AppState>) -> String {
 
     let uptime = app.started.elapsed().as_secs();
 
-    format!(
+    let body = format!(
         "# HELP deltu_events_received_total Total events received into the processing channel\n\
          # TYPE deltu_events_received_total counter\n\
          deltu_events_received_total {}\n\
@@ -336,7 +342,149 @@ pub(crate) async fn get_metrics(State(app): State<AppState>) -> String {
         queue_depth,
         state_entries,
         uptime
+    );
+    (
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "text/plain; version=0.0.4; charset=utf-8",
+        )],
+        body,
     )
+}
+
+/// `POST /v1/decide`: evaluates a typed decision request.
+pub(crate) async fn post_decide(
+    State(app): State<AppState>,
+    Json(req): Json<crate::decision::DecisionRequest>,
+) -> Result<(StatusCode, Json<JsonValue>), (StatusCode, Json<JsonValue>)> {
+    match app.decision_engine.evaluate(req) {
+        Ok(res) => Ok((
+            StatusCode::OK,
+            Json(serde_json::to_value(res).unwrap_or(JsonValue::Null)),
+        )),
+        Err(err) => Err((
+            StatusCode::BAD_REQUEST,
+            Json(error_body("decision_failed", err)),
+        )),
+    }
+}
+
+#[derive(serde::Deserialize)]
+pub(crate) struct ChoiceShortcutRequest {
+    pub input: String,
+    pub options: Vec<String>,
+    #[serde(default = "default_temp")]
+    pub temperature: f32,
+}
+
+fn default_temp() -> f32 {
+    10.0
+}
+
+/// `POST /v1/decide/choice`: shortcut to select one candidate from an options list.
+pub(crate) async fn post_decide_choice(
+    State(app): State<AppState>,
+    Json(req): Json<ChoiceShortcutRequest>,
+) -> Result<(StatusCode, Json<JsonValue>), (StatusCode, Json<JsonValue>)> {
+    let decision_req = crate::decision::DecisionRequest {
+        id: None,
+        input: req.input,
+        schema: crate::decision::DecisionSchema::Choice {
+            options: req.options,
+            temperature: req.temperature,
+        },
+    };
+    match app.decision_engine.evaluate(decision_req) {
+        Ok(res) => Ok((
+            StatusCode::OK,
+            Json(serde_json::to_value(res).unwrap_or(JsonValue::Null)),
+        )),
+        Err(err) => Err((
+            StatusCode::BAD_REQUEST,
+            Json(error_body("decision_failed", err)),
+        )),
+    }
+}
+
+#[derive(serde::Deserialize)]
+pub(crate) struct ScoreShortcutRequest {
+    pub input: String,
+    pub criteria: String,
+    #[serde(default = "default_min_bound")]
+    pub min: f64,
+    #[serde(default = "default_max_bound")]
+    pub max: f64,
+}
+
+fn default_min_bound() -> f64 {
+    0.0
+}
+
+fn default_max_bound() -> f64 {
+    1.0
+}
+
+/// `POST /v1/decide/score`: shortcut to score text against criteria.
+pub(crate) async fn post_decide_score(
+    State(app): State<AppState>,
+    Json(req): Json<ScoreShortcutRequest>,
+) -> Result<(StatusCode, Json<JsonValue>), (StatusCode, Json<JsonValue>)> {
+    let decision_req = crate::decision::DecisionRequest {
+        id: None,
+        input: req.input,
+        schema: crate::decision::DecisionSchema::Score {
+            criteria: req.criteria,
+            min: req.min,
+            max: req.max,
+        },
+    };
+    match app.decision_engine.evaluate(decision_req) {
+        Ok(res) => Ok((
+            StatusCode::OK,
+            Json(serde_json::to_value(res).unwrap_or(JsonValue::Null)),
+        )),
+        Err(err) => Err((
+            StatusCode::BAD_REQUEST,
+            Json(error_body("decision_failed", err)),
+        )),
+    }
+}
+
+#[derive(serde::Deserialize)]
+pub(crate) struct YesNoShortcutRequest {
+    pub input: String,
+    pub condition: String,
+    #[serde(default = "default_thresh")]
+    pub threshold: f32,
+}
+
+fn default_thresh() -> f32 {
+    0.5
+}
+
+/// `POST /v1/decide/yesno`: shortcut to verify a binary condition with calibrated probability.
+pub(crate) async fn post_decide_yesno(
+    State(app): State<AppState>,
+    Json(req): Json<YesNoShortcutRequest>,
+) -> Result<(StatusCode, Json<JsonValue>), (StatusCode, Json<JsonValue>)> {
+    let decision_req = crate::decision::DecisionRequest {
+        id: None,
+        input: req.input,
+        schema: crate::decision::DecisionSchema::YesNo {
+            condition: req.condition,
+            threshold: req.threshold,
+        },
+    };
+    match app.decision_engine.evaluate(decision_req) {
+        Ok(res) => Ok((
+            StatusCode::OK,
+            Json(serde_json::to_value(res).unwrap_or(JsonValue::Null)),
+        )),
+        Err(err) => Err((
+            StatusCode::BAD_REQUEST,
+            Json(error_body("decision_failed", err)),
+        )),
+    }
 }
 
 /// `GET /v1/schedules`: every registered schedule with status + next run.
@@ -396,7 +544,10 @@ pub(crate) async fn get_schedule(
         Some(status) => Ok(Json(json!({ "success": true, "data": status }))),
         None => Err((
             StatusCode::NOT_FOUND,
-            Json(error_body("schedule_not_found", format!("no schedule with id {id:?}"))),
+            Json(error_body(
+                "schedule_not_found",
+                format!("no schedule with id {id:?}"),
+            )),
         )),
     }
 }
@@ -421,11 +572,16 @@ pub(crate) async fn start_schedule(
     match scheduler.set_enabled(&id, true) {
         Ok(true) => {
             persist_schedules(&app).await;
-            Ok(Json(json!({ "success": true, "data": { "running": true } })))
+            Ok(Json(
+                json!({ "success": true, "data": { "running": true } }),
+            ))
         }
         Ok(false) => Err((
             StatusCode::NOT_FOUND,
-            Json(error_body("schedule_not_found", format!("no schedule with id {id:?}"))),
+            Json(error_body(
+                "schedule_not_found",
+                format!("no schedule with id {id:?}"),
+            )),
         )),
         Err(error) => Err((
             StatusCode::BAD_REQUEST,
@@ -443,11 +599,16 @@ pub(crate) async fn stop_schedule(
     match scheduler.set_enabled(&id, false) {
         Ok(true) => {
             persist_schedules(&app).await;
-            Ok(Json(json!({ "success": true, "data": { "running": false } })))
+            Ok(Json(
+                json!({ "success": true, "data": { "running": false } }),
+            ))
         }
         Ok(false) => Err((
             StatusCode::NOT_FOUND,
-            Json(error_body("schedule_not_found", format!("no schedule with id {id:?}"))),
+            Json(error_body(
+                "schedule_not_found",
+                format!("no schedule with id {id:?}"),
+            )),
         )),
         Err(error) => Err((
             StatusCode::BAD_REQUEST,
@@ -463,7 +624,9 @@ pub(crate) async fn trigger_schedule(
 ) -> Result<Json<JsonValue>, (StatusCode, Json<JsonValue>)> {
     let mut scheduler = app.scheduler.lock().await;
     match scheduler.trigger_now(&id) {
-        Ok(()) => Ok(Json(json!({ "success": true, "data": { "triggered": true } }))),
+        Ok(()) => Ok(Json(
+            json!({ "success": true, "data": { "triggered": true } }),
+        )),
         Err(error) => Err((
             StatusCode::NOT_FOUND,
             Json(error_body("schedule_not_found", error)),
@@ -483,20 +646,64 @@ async fn persist_schedules(app: &AppState) {
     }
 }
 
+/// Authentication middleware: validates Bearer token or X-API-Key against the
+/// configured `api_key`. If no `api_key` is configured, requests pass freely.
+async fn auth_middleware(
+    State(app): State<AppState>,
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Result<axum::response::Response, (StatusCode, Json<JsonValue>)> {
+    if let Some(expected_key) = &app.api_key {
+        let auth_header = req
+            .headers()
+            .get(axum::http::header::AUTHORIZATION)
+            .and_then(|h| h.to_str().ok())
+            .and_then(|val| {
+                val.strip_prefix("Bearer ")
+                    .or_else(|| val.strip_prefix("bearer "))
+            })
+            .map(|s| s.trim());
+
+        let x_api_key = req
+            .headers()
+            .get("x-api-key")
+            .and_then(|h| h.to_str().ok())
+            .map(|s| s.trim());
+
+        let matches = match (auth_header, x_api_key) {
+            (Some(token), _) if token == expected_key => true,
+            (_, Some(token)) if token == expected_key => true,
+            _ => false,
+        };
+
+        if !matches {
+            return Err((
+                StatusCode::UNAUTHORIZED,
+                Json(error_body(
+                    "unauthorized",
+                    "valid api key required".to_string(),
+                )),
+            ));
+        }
+    }
+
+    Ok(next.run(req).await)
+}
+
 /// Builds the axum router with documented routes and the body-size guard.
 pub(crate) fn router(app: AppState, max_body_bytes: usize) -> axum::Router {
     use axum::extract::DefaultBodyLimit;
     use axum::routing::{get, post};
 
-    axum::Router::new()
+    let protected = axum::Router::new()
         .route("/v1/events", post(post_events))
-        .route("/health", get(get_health))
+        .route("/v1/decide", post(post_decide))
+        .route("/v1/decide/choice", post(post_decide_choice))
+        .route("/v1/decide/score", post(post_decide_score))
+        .route("/v1/decide/yesno", post(post_decide_yesno))
         .route("/v1/status", get(get_status))
         .route("/metrics", get(get_metrics))
-        .route(
-            "/v1/schedules",
-            get(get_schedules).post(post_schedule),
-        )
+        .route("/v1/schedules", get(get_schedules).post(post_schedule))
         .route(
             "/v1/schedules/{id}",
             get(get_schedule).delete(delete_schedule),
@@ -504,6 +711,14 @@ pub(crate) fn router(app: AppState, max_body_bytes: usize) -> axum::Router {
         .route("/v1/schedules/{id}/start", post(start_schedule))
         .route("/v1/schedules/{id}/stop", post(stop_schedule))
         .route("/v1/schedules/{id}/trigger", post(trigger_schedule))
+        .route_layer(axum::middleware::from_fn_with_state(
+            app.clone(),
+            auth_middleware,
+        ));
+
+    axum::Router::new()
+        .route("/health", get(get_health))
+        .merge(protected)
         .layer(DefaultBodyLimit::max(max_body_bytes))
         .with_state(app)
 }
@@ -513,6 +728,7 @@ pub(crate) fn router(app: AppState, max_body_bytes: usize) -> axum::Router {
 pub async fn serve(config: RuntimeConfig) -> Result<(), String> {
     let RuntimeConfig {
         http,
+        auth,
         pipeline,
         state,
         rules,
@@ -692,6 +908,8 @@ pub async fn serve(config: RuntimeConfig) -> Result<(), String> {
         persistence_counters: persistence_counters.clone(),
         scheduler: scheduler_handle.clone(),
         scheduler_snapshot_path: scheduler_cfg.snapshot_path.clone(),
+        api_key: auth.api_key,
+        decision_engine: Arc::new(crate::decision::DecisionEngine::new()),
     };
     let app = router(app_state, http.max_body_bytes);
 

@@ -48,6 +48,8 @@ fn test_state(
             persistence_counters: Arc::new(crate::persistence::PersistenceCounters::default()),
             scheduler: Arc::new(tokio::sync::Mutex::new(scheduler)),
             scheduler_snapshot_path: None,
+            api_key: None,
+            decision_engine: Arc::new(crate::decision::DecisionEngine::new()),
         },
         rx,
     )
@@ -63,7 +65,32 @@ async fn send(
     uri: &str,
     body: Option<String>,
 ) -> (StatusCode, serde_json::Value) {
-    let (status, bytes) = send_raw(app, method, uri, body).await;
+    send_with_headers(app, method, uri, &[], body).await
+}
+
+async fn send_with_headers(
+    app: Router,
+    method: &str,
+    uri: &str,
+    headers: &[(&str, &str)],
+    body: Option<String>,
+) -> (StatusCode, serde_json::Value) {
+    let mut builder = Request::builder().method(method).uri(uri);
+    for (k, v) in headers {
+        builder = builder.header(*k, *v);
+    }
+    let request = match body {
+        Some(body) => builder
+            .header("content-type", "application/json")
+            .body(Body::from(body))
+            .unwrap(),
+        None => builder.body(Body::empty()).unwrap(),
+    };
+    let response = app.oneshot(request).await.unwrap();
+    let status = response.status();
+    let bytes = axum::body::to_bytes(response.into_body(), 1_048_576)
+        .await
+        .unwrap();
     let value: serde_json::Value = if bytes.is_empty() {
         serde_json::Value::Null
     } else {
@@ -272,7 +299,13 @@ async fn schedule_crud_round_trip() {
     let a = app(state);
 
     // create
-    let (status, body) = send(a.clone(), "POST", "/v1/schedules", Some(interval_body("nightly"))).await;
+    let (status, body) = send(
+        a.clone(),
+        "POST",
+        "/v1/schedules",
+        Some(interval_body("nightly")),
+    )
+    .await;
     assert_eq!(status, StatusCode::CREATED, "body: {body}");
 
     // list shows it with next-run info
@@ -281,12 +314,16 @@ async fn schedule_crud_round_trip() {
     let schedules = body["data"]["schedules"].as_array().unwrap();
     assert_eq!(schedules.len(), 1);
     assert_eq!(schedules[0]["config"]["id"], "nightly");
-    assert!(schedules[0]["next_run_ms"].as_i64().is_some(), "next run exposed");
+    assert!(
+        schedules[0]["next_run_ms"].as_i64().is_some(),
+        "next run exposed"
+    );
     assert_eq!(schedules[0]["running"], true);
     assert_eq!(body["data"]["active_count"], 1);
 
     // single get
     let (status, body) = send(a.clone(), "GET", "/v1/schedules/nightly", None).await;
+    assert_eq!(status, StatusCode::OK);
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["data"]["config"]["spec"]["type"], "interval");
 
@@ -295,6 +332,13 @@ async fn schedule_crud_round_trip() {
     assert_eq!(status, StatusCode::OK, "body: {body}");
     assert_eq!(body["data"]["running"], false);
     let (status, body) = send(a.clone(), "GET", "/v1/schedules/nightly", None).await;
+    assert_eq!(status, StatusCode::OK);
+
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        body["data"]["next_run_ms"].is_null(),
+        "stopped schedule has no next run"
+    );
 
     assert_eq!(status, StatusCode::OK);
     assert!(body["data"]["next_run_ms"].is_null(), "stopped schedule has no next run");
@@ -303,6 +347,7 @@ async fn schedule_crud_round_trip() {
     let (status, _body) = send(a.clone(), "POST", "/v1/schedules/nightly/start", None).await;
     assert_eq!(status, StatusCode::OK);
     let (status, body) = send(a.clone(), "GET", "/v1/schedules/nightly", None).await;
+    assert_eq!(status, StatusCode::OK);
 
     assert_eq!(body["data"]["running"], true);
 
@@ -355,7 +400,13 @@ async fn schedule_trigger_now_enqueues_real_event() {
     let (state, mut rx) = test_state(10, 100);
     let a = app(state);
 
-    let (status, _body) = send(a.clone(), "POST", "/v1/schedules", Some(interval_body("tick"))).await;
+    let (status, _body) = send(
+        a.clone(),
+        "POST",
+        "/v1/schedules",
+        Some(interval_body("tick")),
+    )
+    .await;
     assert_eq!(status, StatusCode::CREATED);
 
     let (status, _body) = send(a.clone(), "POST", "/v1/schedules/tick/trigger", None).await;
@@ -501,8 +552,14 @@ async fn multiple_schedules_run_independently() {
             action_outcomes: vec![],
         });
     }
-    assert!(seen.contains("one"), "both schedules fired independently: {seen:?}");
-    assert!(seen.contains("two"), "both schedules fired independently: {seen:?}");
+    assert!(
+        seen.contains("one"),
+        "both schedules fired independently: {seen:?}"
+    );
+    assert!(
+        seen.contains("two"),
+        "both schedules fired independently: {seen:?}"
+    );
 }
 
 #[tokio::test]
@@ -524,4 +581,128 @@ async fn unknown_route_returns_404() {
     let (state, _rx) = test_state(10, 100);
     let (status, _) = send(app(state), "GET", "/nope", None).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn auth_rejects_unauthorized_when_api_key_is_configured() {
+    let (mut state, mut rx) = test_state(10, 100);
+    state.api_key = Some("secret-token".to_string());
+    tokio::spawn(async move {
+        while let Some(item) = rx.recv().await {
+            let _ = item.reply.send(CoreOutcome {
+                accepted: vec![true; item.events.len()],
+                action_outcomes: vec![],
+            });
+        }
+    });
+    let a = app(state);
+
+    // Missing auth header on protected route -> 401
+    let (status, body) = send(a.clone(), "GET", "/v1/status", None).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert_eq!(body["error"]["code"], "unauthorized");
+
+    // Invalid token -> 401
+    let (status, body) = send_with_headers(
+        a.clone(),
+        "GET",
+        "/v1/status",
+        &[("Authorization", "Bearer wrong-token")],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert_eq!(body["error"]["code"], "unauthorized");
+
+    // Valid Bearer token -> 200
+    let (status, body) = send_with_headers(
+        a.clone(),
+        "GET",
+        "/v1/status",
+        &[("Authorization", "Bearer secret-token")],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["success"], true);
+
+    // Valid X-API-Key header on events endpoint -> 202
+    let payload = serde_json::json!({ "events": [valid_event("e1")] }).to_string();
+    let (status, body) = send_with_headers(
+        a.clone(),
+        "POST",
+        "/v1/events",
+        &[("x-api-key", "secret-token")],
+        Some(payload),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "got {body}");
+
+    // /health remains completely public
+    let (status, body) = send(a.clone(), "GET", "/health", None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["status"], "ok");
+}
+
+#[tokio::test]
+async fn decide_http_endpoints_evaluate_choice_and_schemas() {
+    let (state, _rx) = test_state(10, 100);
+    let a = app(state);
+
+    // POST /v1/decide/choice shortcut
+    let shortcut_payload = serde_json::json!({
+        "input": "My monthly subscription invoice was overbilled",
+        "options": ["billing_inquiry", "bug_report", "feature_request"]
+    })
+    .to_string();
+
+    let (status, body) = send(
+        a.clone(),
+        "POST",
+        "/v1/decide/choice",
+        Some(shortcut_payload),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["outcome"]["selected"], "billing_inquiry");
+    assert!(body["outcome"]["confidence"].as_f64().unwrap() > 0.4);
+
+    // POST /v1/decide general schema
+    let decide_payload = serde_json::json!({
+        "input": "Database crashed with out of memory error",
+        "schema": {
+            "type": "score",
+            "criteria": "critical infrastructure failure",
+            "min": 0.0,
+            "max": 10.0
+        }
+    })
+    .to_string();
+
+    let (status, body) = send(a.clone(), "POST", "/v1/decide", Some(decide_payload)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body["outcome"]["score"].as_f64().unwrap() > 5.0);
+
+    // POST /v1/decide/score shortcut
+    let score_payload = serde_json::json!({
+        "input": "Urgent security vulnerability discovered in authentication",
+        "criteria": "security emergency",
+        "min": 0.0,
+        "max": 100.0
+    })
+    .to_string();
+    let (status, body) = send(a.clone(), "POST", "/v1/decide/score", Some(score_payload)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body["outcome"]["score"].as_f64().unwrap() > 50.0);
+
+    // POST /v1/decide/yesno shortcut
+    let yesno_payload = serde_json::json!({
+        "input": "I need help resetting my account password immediately",
+        "condition": "password reset account support"
+    })
+    .to_string();
+    let (status, body) = send(a, "POST", "/v1/decide/yesno", Some(yesno_payload)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["outcome"]["result"], true);
+    assert!(body["outcome"]["probability"].as_f64().unwrap() > 0.5);
 }

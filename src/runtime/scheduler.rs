@@ -93,8 +93,9 @@ impl Weekday {
             if token.is_empty() {
                 continue;
             }
-            let day = Self::parse(token)
-                .ok_or_else(|| format!("unknown weekday {token:?} (use Mon, Tue, Wed, Thu, Fri, Sat, Sun)"))?;
+            let day = Self::parse(token).ok_or_else(|| {
+                format!("unknown weekday {token:?} (use Mon, Tue, Wed, Thu, Fri, Sat, Sun)")
+            })?;
             if !days.contains(&day) {
                 days.push(day);
             }
@@ -335,7 +336,11 @@ impl ScheduleConfig {
                 }
                 parse_time(time)?;
             }
-            ScheduleSpec::MonthlyNth { nth, weekday: _, time } => {
+            ScheduleSpec::MonthlyNth {
+                nth,
+                weekday: _,
+                time,
+            } => {
                 if !(1..=5).contains(nth) {
                     return Err(format!("monthly_nth nth must be 1..=5, got {nth}"));
                 }
@@ -381,15 +386,32 @@ pub fn parse_time(value: &str) -> Result<NaiveTime, String> {
     let parts: Vec<&str> = trimmed.split(':').collect();
     match parts.as_slice() {
         [h, m] => {
-            let hour: u32 = h.trim().parse().map_err(|_| format!("invalid hour in time {value:?}"))?;
-            let minute: u32 = m.trim().parse().map_err(|_| format!("invalid minute in time {value:?}"))?;
-            NaiveTime::from_hms_opt(hour, minute, 0).ok_or_else(|| format!("time {value:?} out of range"))
+            let hour: u32 = h
+                .trim()
+                .parse()
+                .map_err(|_| format!("invalid hour in time {value:?}"))?;
+            let minute: u32 = m
+                .trim()
+                .parse()
+                .map_err(|_| format!("invalid minute in time {value:?}"))?;
+            NaiveTime::from_hms_opt(hour, minute, 0)
+                .ok_or_else(|| format!("time {value:?} out of range"))
         }
         [h, m, s] => {
-            let hour: u32 = h.trim().parse().map_err(|_| format!("invalid hour in time {value:?}"))?;
-            let minute: u32 = m.trim().parse().map_err(|_| format!("invalid minute in time {value:?}"))?;
-            let second: u32 = s.trim().parse().map_err(|_| format!("invalid second in time {value:?}"))?;
-            NaiveTime::from_hms_opt(hour, minute, second).ok_or_else(|| format!("time {value:?} out of range"))
+            let hour: u32 = h
+                .trim()
+                .parse()
+                .map_err(|_| format!("invalid hour in time {value:?}"))?;
+            let minute: u32 = m
+                .trim()
+                .parse()
+                .map_err(|_| format!("invalid minute in time {value:?}"))?;
+            let second: u32 = s
+                .trim()
+                .parse()
+                .map_err(|_| format!("invalid second in time {value:?}"))?;
+            NaiveTime::from_hms_opt(hour, minute, second)
+                .ok_or_else(|| format!("time {value:?} out of range"))
         }
         _ => Err(format!("time {value:?} must be HH:MM or HH:MM:SS")),
     }
@@ -440,7 +462,9 @@ pub fn next_occurrence(spec: &ScheduleSpec, tz: Tz, after: DateTime<Utc>) -> Opt
         }
         ScheduleSpec::Cron { expression } => {
             let cron = CronSchedule::from_str(&expand_cron(expression.trim())).ok()?;
-            cron.after(&after.with_timezone(&tz)).next().map(|next| next.with_timezone(&Utc))
+            cron.after(&after.with_timezone(&tz))
+                .next()
+                .map(|next| next.with_timezone(&Utc))
         }
     }
 }
@@ -449,9 +473,7 @@ fn next_daily(t: NaiveTime, tz: Tz, after: DateTime<Utc>) -> Option<DateTime<Utc
     let local_after = after.with_timezone(&tz);
     for day_offset in 0..2 {
         let date = local_after.date_naive() + ChronoDuration::days(day_offset);
-        let candidate_local = tz
-            .from_local_datetime(&date.and_time(t))
-            .single()?;
+        let candidate_local = tz.from_local_datetime(&date.and_time(t)).single()?;
         let candidate_utc = candidate_local.with_timezone(&Utc);
         if candidate_utc > after {
             return Some(candidate_utc);
@@ -460,7 +482,12 @@ fn next_daily(t: NaiveTime, tz: Tz, after: DateTime<Utc>) -> Option<DateTime<Utc
     None
 }
 
-fn next_weekly(days: &[Weekday], tz: Tz, after: DateTime<Utc>, t: NaiveTime) -> Option<DateTime<Utc>> {
+fn next_weekly(
+    days: &[Weekday],
+    tz: Tz,
+    after: DateTime<Utc>,
+    t: NaiveTime,
+) -> Option<DateTime<Utc>> {
     let local_after = after.with_timezone(&tz);
     // Up to 8 days forward always covers every weekday at least once.
     for day_offset in 0..8 {
@@ -481,7 +508,13 @@ fn next_weekly(days: &[Weekday], tz: Tz, after: DateTime<Utc>, t: NaiveTime) -> 
 /// Anchor for every-N-weeks: the Monday of the week (local) containing the
 /// schedule's first occurrence at-or-after `after`... computed forward from
 /// the current week so restarts stay aligned to the same grid.
-fn next_every_n_weeks(interval_weeks: u32, day: Weekday, t: NaiveTime, tz: Tz, after: DateTime<Utc>) -> Option<DateTime<Utc>> {
+fn next_every_n_weeks(
+    interval_weeks: u32,
+    day: Weekday,
+    t: NaiveTime,
+    tz: Tz,
+    after: DateTime<Utc>,
+) -> Option<DateTime<Utc>> {
     let local_after = after.with_timezone(&tz);
     // Walk week by week; the grid anchors to the week of `after` so it is
     // stable across restarts without persisting an anchor date.
@@ -520,7 +553,9 @@ impl WeeksSinceEpoch for chrono::NaiveDate {
         // Day 0 = 1970-01-01 (a Thursday). Monday of that week:
         // 1970-01-05. Days since 1970-01-05, divided by 7 (floor).
         let epoch_monday = chrono::NaiveDate::from_ymd_opt(1970, 1, 5).unwrap();
-        self.signed_duration_since(epoch_monday).num_days().div_euclid(7)
+        self.signed_duration_since(epoch_monday)
+            .num_days()
+            .div_euclid(7)
     }
 }
 
@@ -546,13 +581,22 @@ fn next_monthly(day: u32, t: NaiveTime, tz: Tz, after: DateTime<Utc>) -> Option<
 fn last_day_of(month_start: chrono::NaiveDate) -> u32 {
     let year = month_start.year();
     let month = month_start.month();
-    let (next_year, next_month) = if month == 12 { (year + 1, 1) } else { (year, month + 1) };
-    let next_month_start =
-        chrono::NaiveDate::from_ymd_opt(next_year, next_month, 1).unwrap();
+    let (next_year, next_month) = if month == 12 {
+        (year + 1, 1)
+    } else {
+        (year, month + 1)
+    };
+    let next_month_start = chrono::NaiveDate::from_ymd_opt(next_year, next_month, 1).unwrap();
     (next_month_start - ChronoDuration::days(1)).day()
 }
 
-fn next_monthly_nth(nth: u32, weekday: Weekday, t: NaiveTime, tz: Tz, after: DateTime<Utc>) -> Option<DateTime<Utc>> {
+fn next_monthly_nth(
+    nth: u32,
+    weekday: Weekday,
+    t: NaiveTime,
+    tz: Tz,
+    after: DateTime<Utc>,
+) -> Option<DateTime<Utc>> {
     let local_after = after.with_timezone(&tz);
     for month_offset in 0..3 {
         let base = local_after.date_naive().with_day(1).unwrap()
@@ -569,7 +613,11 @@ fn next_monthly_nth(nth: u32, weekday: Weekday, t: NaiveTime, tz: Tz, after: Dat
     None
 }
 
-fn nth_weekday_of_month(month_start: chrono::NaiveDate, nth: u32, weekday: Weekday) -> Option<chrono::NaiveDate> {
+fn nth_weekday_of_month(
+    month_start: chrono::NaiveDate,
+    nth: u32,
+    weekday: Weekday,
+) -> Option<chrono::NaiveDate> {
     let mut date = month_start;
     let mut seen = 0;
     while date.month() == month_start.month() {
@@ -669,7 +717,9 @@ impl Scheduler {
     /// before any state change — a rejected config leaves the existing
     /// schedule untouched.
     pub fn add(&mut self, config: ScheduleConfig) -> Result<(), String> {
-        config.validate().map_err(|error| format!("invalid schedule: {error}"))?;
+        config
+            .validate()
+            .map_err(|error| format!("invalid schedule: {error}"))?;
         let id = config.id.trim().to_string();
         // replace-or-insert: abort any previous task for this id
         self.remove(&id);
@@ -757,10 +807,22 @@ impl Scheduler {
                     running: task.config.enabled && !task.handle.is_finished(),
                     next_run_ms,
                     last_fired_ms: task.last_fired_ms,
-                    fired_count: task.counters.fired.load(std::sync::atomic::Ordering::Relaxed),
-                    skipped_count: task.counters.skipped.load(std::sync::atomic::Ordering::Relaxed),
-                    caught_up_count: task.counters.caught_up.load(std::sync::atomic::Ordering::Relaxed),
-                    missed_count: task.counters.missed.load(std::sync::atomic::Ordering::Relaxed),
+                    fired_count: task
+                        .counters
+                        .fired
+                        .load(std::sync::atomic::Ordering::Relaxed),
+                    skipped_count: task
+                        .counters
+                        .skipped
+                        .load(std::sync::atomic::Ordering::Relaxed),
+                    caught_up_count: task
+                        .counters
+                        .caught_up
+                        .load(std::sync::atomic::Ordering::Relaxed),
+                    missed_count: task
+                        .counters
+                        .missed
+                        .load(std::sync::atomic::Ordering::Relaxed),
                     effective_cron: task.config.effective_cron().unwrap_or_default(),
                 }
             })
@@ -788,7 +850,8 @@ impl Scheduler {
         let temp = format!("{path}.tmp");
         std::fs::write(&temp, serialized)
             .map_err(|error| format!("failed to write {temp}: {error}"))?;
-        std::fs::rename(&temp, path).map_err(|error| format!("failed to rename into {path}: {error}"))
+        std::fs::rename(&temp, path)
+            .map_err(|error| format!("failed to rename into {path}: {error}"))
     }
 
     /// Restores configs from `path`, returning them (the caller re-adds
@@ -799,7 +862,8 @@ impl Scheduler {
         if !std::path::Path::new(path).exists() {
             return Ok(Vec::new());
         }
-        let bytes = std::fs::read(path).map_err(|error| format!("failed to read {path}: {error}"))?;
+        let bytes =
+            std::fs::read(path).map_err(|error| format!("failed to read {path}: {error}"))?;
         let file: ScheduleSnapshot = serde_json::from_slice(&bytes)
             .map_err(|error| format!("schedule snapshot {path} is corrupted: {error}"))?;
         if file.format_version != SNAPSHOT_FORMAT_VERSION {
@@ -809,9 +873,12 @@ impl Scheduler {
             ));
         }
         for config in &file.schedules {
-            config
-                .validate()
-                .map_err(|error| format!("restored schedule {:?} no longer validates: {error}", config.id))?;
+            config.validate().map_err(|error| {
+                format!(
+                    "restored schedule {:?} no longer validates: {error}",
+                    config.id
+                )
+            })?;
         }
         Ok(file.schedules)
     }
@@ -845,7 +912,11 @@ struct ScheduleSnapshot {
 /// occurrence (sub-second race) cannot double-fire.
 const WAKE_SLACK_MS: i64 = 50;
 
-async fn run_task(config: ScheduleConfig, queue: Arc<tokio::sync::mpsc::Sender<WorkItem>>, counters: Arc<ScheduleCounters>) {
+async fn run_task(
+    config: ScheduleConfig,
+    queue: Arc<tokio::sync::mpsc::Sender<WorkItem>>,
+    counters: Arc<ScheduleCounters>,
+) {
     let Ok(tz) = Tz::from_str(config.timezone.trim()) else {
         return; // validated at add(); defensive only
     };
@@ -874,8 +945,15 @@ async fn run_task(config: ScheduleConfig, queue: Arc<tokio::sync::mpsc::Sender<W
                     MissedPolicy::FireOnce => {
                         // deliver one run now, mark the rest missed
                         counters.caught_up.fetch_add(1, Relaxed);
-                        counters.missed.fetch_add((missed.saturating_sub(1)) as u64, Relaxed);
-                        let fired_at = send_event(&queue, &config.id, now.timestamp_millis(), config.payload.clone());
+                        counters
+                            .missed
+                            .fetch_add((missed.saturating_sub(1)) as u64, Relaxed);
+                        let fired_at = send_event(
+                            &queue,
+                            &config.id,
+                            now.timestamp_millis(),
+                            config.payload.clone(),
+                        );
                         if fired_at.is_some() {
                             counters.fired.fetch_add(1, Relaxed);
                         }
@@ -883,7 +961,12 @@ async fn run_task(config: ScheduleConfig, queue: Arc<tokio::sync::mpsc::Sender<W
                     MissedPolicy::CatchUp { catch_up_max } => {
                         let replay = missed.min(i64::from(catch_up_max.max(1)));
                         for _ in 0..replay {
-                            let fired_at = send_event(&queue, &config.id, now.timestamp_millis(), config.payload.clone());
+                            let fired_at = send_event(
+                                &queue,
+                                &config.id,
+                                now.timestamp_millis(),
+                                config.payload.clone(),
+                            );
                             if fired_at.is_some() {
                                 counters.fired.fetch_add(1, Relaxed);
                                 counters.caught_up.fetch_add(1, Relaxed);
@@ -891,9 +974,10 @@ async fn run_task(config: ScheduleConfig, queue: Arc<tokio::sync::mpsc::Sender<W
                                 counters.missed.fetch_add(1, Relaxed);
                             }
                         }
-                        counters
-                            .missed
-                            .fetch_add((missed.saturating_sub(i64::from(catch_up_max.max(1)))) as u64, Relaxed);
+                        counters.missed.fetch_add(
+                            (missed.saturating_sub(i64::from(catch_up_max.max(1)))) as u64,
+                            Relaxed,
+                        );
                     }
                 }
                 fired_at_least_once = true;
@@ -941,7 +1025,8 @@ async fn run_task(config: ScheduleConfig, queue: Arc<tokio::sync::mpsc::Sender<W
             match config.missed_policy {
                 MissedPolicy::FireOnce => {
                     // still deliver once — the operator asked for a run
-                    let fired_at = send_event(&queue, &config.id, planned_ms, config.payload.clone());
+                    let fired_at =
+                        send_event(&queue, &config.id, planned_ms, config.payload.clone());
                     if fired_at.is_some() {
                         counters.fired.fetch_add(1, Relaxed);
                         counters.caught_up.fetch_add(1, Relaxed);
@@ -952,7 +1037,8 @@ async fn run_task(config: ScheduleConfig, queue: Arc<tokio::sync::mpsc::Sender<W
                     // deliver one (bounded replay is handled by the
                     // catch-up scan at (re)start; here one late fire is
                     // the friendly behavior)
-                    let fired_at = send_event(&queue, &config.id, planned_ms, config.payload.clone());
+                    let fired_at =
+                        send_event(&queue, &config.id, planned_ms, config.payload.clone());
                     if fired_at.is_some() {
                         counters.fired.fetch_add(1, Relaxed);
                         counters.caught_up.fetch_add(1, Relaxed);
@@ -1031,15 +1117,15 @@ pub fn scheduled_event_id(schedule_id: &str, planned_ms: i64) -> String {
     format!("sched-{schedule_id}-{planned_ms}")
 }
 
-
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use chrono::TimeZone;
 
     fn utc(ms_or_secs: (i64, u32)) -> DateTime<Utc> {
-        Utc.timestamp_opt(ms_or_secs.0, ms_or_secs.1).single().unwrap()
+        Utc.timestamp_opt(ms_or_secs.0, ms_or_secs.1)
+            .single()
+            .unwrap()
     }
 
     fn tz(name: &str) -> Tz {
@@ -1052,7 +1138,10 @@ mod tests {
     fn validates_interval_and_rejects_zero() {
         let good = ScheduleConfig {
             id: "i".into(),
-            spec: ScheduleSpec::Interval { unit: IntervalUnit::Minutes, every: 5 },
+            spec: ScheduleSpec::Interval {
+                unit: IntervalUnit::Minutes,
+                every: 5,
+            },
             timezone: "UTC".into(),
             payload: serde_json::json!({}),
             missed_policy: MissedPolicy::default(),
@@ -1063,11 +1152,17 @@ mod tests {
         };
         assert!(good.validate().is_ok());
         let bad = ScheduleConfig {
-            spec: ScheduleSpec::Interval { unit: IntervalUnit::Seconds, every: 0 },
+            spec: ScheduleSpec::Interval {
+                unit: IntervalUnit::Seconds,
+                every: 0,
+            },
             ..good.clone()
         };
         assert!(bad.validate().is_err());
-        let empty_id = ScheduleConfig { id: "  ".into(), ..good };
+        let empty_id = ScheduleConfig {
+            id: "  ".into(),
+            ..good
+        };
         assert!(empty_id.validate().is_err());
     }
 
@@ -1075,7 +1170,9 @@ mod tests {
     fn validates_timezone_and_time_strings() {
         let base = ScheduleConfig {
             id: "d".into(),
-            spec: ScheduleSpec::Daily { time: "09:30".into() },
+            spec: ScheduleSpec::Daily {
+                time: "09:30".into(),
+            },
             timezone: "Asia/Kolkata".into(),
             payload: serde_json::json!({}),
             missed_policy: MissedPolicy::default(),
@@ -1085,16 +1182,30 @@ mod tests {
             enabled: true,
         };
         assert!(base.validate().is_ok());
-        let bad_tz = ScheduleConfig { timezone: "Mars/Olympus".into(), ..base.clone() };
+        let bad_tz = ScheduleConfig {
+            timezone: "Mars/Olympus".into(),
+            ..base.clone()
+        };
         assert!(bad_tz.validate().is_err());
-        let bad_time = ScheduleConfig { spec: ScheduleSpec::Daily { time: "25:99".into() }, ..base };
+        let bad_time = ScheduleConfig {
+            spec: ScheduleSpec::Daily {
+                time: "25:99".into(),
+            },
+            ..base
+        };
         assert!(bad_time.validate().is_err());
     }
 
     #[test]
     fn parses_time_strings() {
-        assert_eq!(parse_time("09:30").unwrap(), NaiveTime::from_hms_opt(9, 30, 0).unwrap());
-        assert_eq!(parse_time(" 7:05:09 ").unwrap(), NaiveTime::from_hms_opt(7, 5, 9).unwrap());
+        assert_eq!(
+            parse_time("09:30").unwrap(),
+            NaiveTime::from_hms_opt(9, 30, 0).unwrap()
+        );
+        assert_eq!(
+            parse_time(" 7:05:09 ").unwrap(),
+            NaiveTime::from_hms_opt(7, 5, 9).unwrap()
+        );
         assert!(parse_time("9").is_err());
         assert!(parse_time("09:60").is_err());
     }
@@ -1103,22 +1214,39 @@ mod tests {
 
     #[test]
     fn interval_seconds_next_run_is_grid_aligned() {
-        let spec = ScheduleSpec::Interval { unit: IntervalUnit::Seconds, every: 15 };
+        let spec = ScheduleSpec::Interval {
+            unit: IntervalUnit::Seconds,
+            every: 15,
+        };
         let now = utc((1_700_000_010, 0)); // not on the 15s grid
         let next = next_occurrence(&spec, tz("UTC"), now).unwrap();
-        assert_eq!(next.timestamp(), 1_700_000_010 + (15 - 1_700_000_010 % 15));
+        let remainder = 1_700_000_010 % 15;
+        let delta = if remainder == 0 { 15 } else { 15 - remainder };
+        assert_eq!(next.timestamp(), 1_700_000_010 + delta);
     }
 
     #[test]
     fn interval_minutes_and_hours() {
-        let minutes = ScheduleSpec::Interval { unit: IntervalUnit::Minutes, every: 30 };
+        let minutes = ScheduleSpec::Interval {
+            unit: IntervalUnit::Minutes,
+            every: 30,
+        };
         let now = utc((1_700_000_100, 0));
         let next = next_occurrence(&minutes, tz("UTC"), now).unwrap();
-        assert_eq!(next.timestamp() - now.timestamp(), 30 * 60 - (now.timestamp() % (30 * 60)));
+        assert_eq!(
+            next.timestamp() - now.timestamp(),
+            30 * 60 - (now.timestamp() % (30 * 60))
+        );
 
-        let hours = ScheduleSpec::Interval { unit: IntervalUnit::Hours, every: 2 };
+        let hours = ScheduleSpec::Interval {
+            unit: IntervalUnit::Hours,
+            every: 2,
+        };
         let next_h = next_occurrence(&hours, tz("UTC"), now).unwrap();
-        assert_eq!(next_h.timestamp() - now.timestamp(), 2 * 3_600 - (now.timestamp() % (2 * 3_600)));
+        assert_eq!(
+            next_h.timestamp() - now.timestamp(),
+            2 * 3_600 - (now.timestamp() % (2 * 3_600))
+        );
     }
 
     // --- next_occurrence: daily + timezone ---
@@ -1126,25 +1254,48 @@ mod tests {
     #[test]
     fn daily_respects_timezone() {
         // 09:30 Kolkata is 04:00 UTC.
-        let spec = ScheduleSpec::Daily { time: "09:30".into() };
+        let spec = ScheduleSpec::Daily {
+            time: "09:30".into(),
+        };
         let kolkata = tz("Asia/Kolkata");
         // 2026-01-15 03:59 UTC = 09:29 IST → next run 09:30 IST = 04:00 UTC.
-        let now = DateTime::parse_from_rfc3339("2026-01-15T03:59:00Z").unwrap().with_timezone(&Utc);
+        let now = DateTime::parse_from_rfc3339("2026-01-15T03:59:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
         let next = next_occurrence(&spec, kolkata, now).unwrap();
-        assert_eq!(next, DateTime::parse_from_rfc3339("2026-01-15T04:00:00Z").unwrap().with_timezone(&Utc));
+        assert_eq!(
+            next,
+            DateTime::parse_from_rfc3339("2026-01-15T04:00:00Z")
+                .unwrap()
+                .with_timezone(&Utc)
+        );
 
         // Same wall time in New York (winter, UTC-5): 09:30 EST = 14:30 UTC.
         let ny = tz("America/New_York");
         let next_ny = next_occurrence(&spec, ny, now).unwrap();
-        assert_eq!(next_ny, DateTime::parse_from_rfc3339("2026-01-15T14:30:00Z").unwrap().with_timezone(&Utc));
+        assert_eq!(
+            next_ny,
+            DateTime::parse_from_rfc3339("2026-01-15T14:30:00Z")
+                .unwrap()
+                .with_timezone(&Utc)
+        );
     }
 
     #[test]
     fn daily_skips_to_tomorrow_when_time_passed() {
-        let spec = ScheduleSpec::Daily { time: "00:00".into() };
-        let now = DateTime::parse_from_rfc3339("2026-01-15T10:00:00Z").unwrap().with_timezone(&Utc);
+        let spec = ScheduleSpec::Daily {
+            time: "00:00".into(),
+        };
+        let now = DateTime::parse_from_rfc3339("2026-01-15T10:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
         let next = next_occurrence(&spec, tz("UTC"), now).unwrap();
-        assert_eq!(next, DateTime::parse_from_rfc3339("2026-01-16T00:00:00Z").unwrap().with_timezone(&Utc));
+        assert_eq!(
+            next,
+            DateTime::parse_from_rfc3339("2026-01-16T00:00:00Z")
+                .unwrap()
+                .with_timezone(&Utc)
+        );
     }
 
     // --- next_occurrence: weekly ---
@@ -1156,24 +1307,48 @@ mod tests {
             time: "08:00".into(),
         };
         // 2026-01-14 is a Wednesday. Next: Friday 2026-01-16 08:00 UTC.
-        let now = DateTime::parse_from_rfc3339("2026-01-14T10:00:00Z").unwrap().with_timezone(&Utc);
+        let now = DateTime::parse_from_rfc3339("2026-01-14T10:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
         let next = next_occurrence(&spec, tz("UTC"), now).unwrap();
-        assert_eq!(next, DateTime::parse_from_rfc3339("2026-01-16T08:00:00Z").unwrap().with_timezone(&Utc));
+        assert_eq!(
+            next,
+            DateTime::parse_from_rfc3339("2026-01-16T08:00:00Z")
+                .unwrap()
+                .with_timezone(&Utc)
+        );
 
         // 2026-01-16 09:00 (after Friday 08:00) → Monday 2026-01-19 08:00.
-        let later = DateTime::parse_from_rfc3339("2026-01-16T09:00:00Z").unwrap().with_timezone(&Utc);
+        let later = DateTime::parse_from_rfc3339("2026-01-16T09:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
         let next_mon = next_occurrence(&spec, tz("UTC"), later).unwrap();
-        assert_eq!(next_mon, DateTime::parse_from_rfc3339("2026-01-19T08:00:00Z").unwrap().with_timezone(&Utc));
+        assert_eq!(
+            next_mon,
+            DateTime::parse_from_rfc3339("2026-01-19T08:00:00Z")
+                .unwrap()
+                .with_timezone(&Utc)
+        );
     }
 
     #[test]
     fn weekly_in_timezone() {
         // Friday 08:00 in Sydney (AEDT, UTC+11 in January).
-        let spec = ScheduleSpec::Weekly { days: vec![Weekday::Friday], time: "08:00".into() };
-        let now = DateTime::parse_from_rfc3339("2026-01-14T10:00:00Z").unwrap().with_timezone(&Utc);
+        let spec = ScheduleSpec::Weekly {
+            days: vec![Weekday::Friday],
+            time: "08:00".into(),
+        };
+        let now = DateTime::parse_from_rfc3339("2026-01-14T10:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
         let next = next_occurrence(&spec, tz("Australia/Sydney"), now).unwrap();
         // Friday 2026-01-16 08:00 AEDT = 2026-01-15 21:00 UTC.
-        assert_eq!(next, DateTime::parse_from_rfc3339("2026-01-15T21:00:00Z").unwrap().with_timezone(&Utc));
+        assert_eq!(
+            next,
+            DateTime::parse_from_rfc3339("2026-01-15T21:00:00Z")
+                .unwrap()
+                .with_timezone(&Utc)
+        );
     }
 
     // --- next_occurrence: every N weeks ---
@@ -1189,14 +1364,28 @@ mod tests {
         };
         // 2026-01-05 Monday: days since 1970-01-05 = 20444 → weeks = 2920
         // (even) → fires. 2026-01-12: weeks = 2921 (odd) → skipped.
-        let before = DateTime::parse_from_rfc3339("2026-01-04T10:00:00Z").unwrap().with_timezone(&Utc);
+        let before = DateTime::parse_from_rfc3339("2026-01-04T10:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
         let next = next_occurrence(&spec, tz("UTC"), before).unwrap();
-        assert_eq!(next, DateTime::parse_from_rfc3339("2026-01-05T09:00:00Z").unwrap().with_timezone(&Utc));
+        assert_eq!(
+            next,
+            DateTime::parse_from_rfc3339("2026-01-05T09:00:00Z")
+                .unwrap()
+                .with_timezone(&Utc)
+        );
 
         // After the 2026-01-05 firing, the next is 2026-01-19 (two weeks), not 01-12.
-        let after = DateTime::parse_from_rfc3339("2026-01-05T09:30:00Z").unwrap().with_timezone(&Utc);
+        let after = DateTime::parse_from_rfc3339("2026-01-05T09:30:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
         let next2 = next_occurrence(&spec, tz("UTC"), after).unwrap();
-        assert_eq!(next2, DateTime::parse_from_rfc3339("2026-01-19T09:00:00Z").unwrap().with_timezone(&Utc));
+        assert_eq!(
+            next2,
+            DateTime::parse_from_rfc3339("2026-01-19T09:00:00Z")
+                .unwrap()
+                .with_timezone(&Utc)
+        );
     }
 
     // --- next_occurrence: monthly ---
@@ -1204,33 +1393,70 @@ mod tests {
     #[test]
     fn monthly_clamps_short_months() {
         // Day 31 in a 30-day month fires on the 30th (clamped).
-        let spec = ScheduleSpec::Monthly { day: 31, time: "12:00".into() };
+        let spec = ScheduleSpec::Monthly {
+            day: 31,
+            time: "12:00".into(),
+        };
         // April has 30 days; asking just before April 30 → clamps to Apr 30.
-        let now = DateTime::parse_from_rfc3339("2026-04-01T10:00:00Z").unwrap().with_timezone(&Utc);
+        let now = DateTime::parse_from_rfc3339("2026-04-01T10:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
         let next = next_occurrence(&spec, tz("UTC"), now).unwrap();
-        assert_eq!(next, DateTime::parse_from_rfc3339("2026-04-30T12:00:00Z").unwrap().with_timezone(&Utc));
+        assert_eq!(
+            next,
+            DateTime::parse_from_rfc3339("2026-04-30T12:00:00Z")
+                .unwrap()
+                .with_timezone(&Utc)
+        );
     }
 
     #[test]
     fn monthly_nth_weekday() {
         // Third Friday of January 2026 = 2026-01-16.
-        let spec = ScheduleSpec::MonthlyNth { nth: 3, weekday: Weekday::Friday, time: "10:00".into() };
-        let now = DateTime::parse_from_rfc3339("2026-01-02T10:00:00Z").unwrap().with_timezone(&Utc);
+        let spec = ScheduleSpec::MonthlyNth {
+            nth: 3,
+            weekday: Weekday::Friday,
+            time: "10:00".into(),
+        };
+        let now = DateTime::parse_from_rfc3339("2026-01-02T10:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
         let next = next_occurrence(&spec, tz("UTC"), now).unwrap();
-        assert_eq!(next, DateTime::parse_from_rfc3339("2026-01-16T10:00:00Z").unwrap().with_timezone(&Utc));
+        assert_eq!(
+            next,
+            DateTime::parse_from_rfc3339("2026-01-16T10:00:00Z")
+                .unwrap()
+                .with_timezone(&Utc)
+        );
 
         // After it, the next third-Friday is February: 2026-02-20.
-        let after = DateTime::parse_from_rfc3339("2026-01-16T11:00:00Z").unwrap().with_timezone(&Utc);
+        let after = DateTime::parse_from_rfc3339("2026-01-16T11:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
         let next2 = next_occurrence(&spec, tz("UTC"), after).unwrap();
-        assert_eq!(next2, DateTime::parse_from_rfc3339("2026-02-20T10:00:00Z").unwrap().with_timezone(&Utc));
+        assert_eq!(
+            next2,
+            DateTime::parse_from_rfc3339("2026-02-20T10:00:00Z")
+                .unwrap()
+                .with_timezone(&Utc)
+        );
     }
 
     #[test]
     fn monthly_last_day() {
-        let spec = ScheduleSpec::MonthlyLast { time: "23:59".into() };
-        let now = DateTime::parse_from_rfc3339("2026-02-10T10:00:00Z").unwrap().with_timezone(&Utc);
+        let spec = ScheduleSpec::MonthlyLast {
+            time: "23:59".into(),
+        };
+        let now = DateTime::parse_from_rfc3339("2026-02-10T10:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
         let next = next_occurrence(&spec, tz("UTC"), now).unwrap();
-        assert_eq!(next, DateTime::parse_from_rfc3339("2026-02-28T23:59:00Z").unwrap().with_timezone(&Utc));
+        assert_eq!(
+            next,
+            DateTime::parse_from_rfc3339("2026-02-28T23:59:00Z")
+                .unwrap()
+                .with_timezone(&Utc)
+        );
     }
 
     // --- next_occurrence: cron ---
@@ -1238,23 +1464,41 @@ mod tests {
     #[test]
     fn cron_expression_evaluates_in_timezone() {
         // 6-field cron (with seconds): every day 09:30:00.
-        let spec = ScheduleSpec::Cron { expression: "0 30 9 * * *".into() };
-        let now = DateTime::parse_from_rfc3339("2026-01-15T08:00:00Z").unwrap().with_timezone(&Utc);
+        let spec = ScheduleSpec::Cron {
+            expression: "0 30 9 * * *".into(),
+        };
+        let now = DateTime::parse_from_rfc3339("2026-01-15T08:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
         let next = next_occurrence(&spec, tz("Europe/Berlin"), now).unwrap();
         // 09:30 Berlin (CET, UTC+1) = 08:30 UTC.
-        assert_eq!(next, DateTime::parse_from_rfc3339("2026-01-15T08:30:00Z").unwrap().with_timezone(&Utc));
+        assert_eq!(
+            next,
+            DateTime::parse_from_rfc3339("2026-01-15T08:30:00Z")
+                .unwrap()
+                .with_timezone(&Utc)
+        );
 
         // 5-field form also accepted.
-        let five = ScheduleSpec::Cron { expression: "30 9 * * *".into() };
+        let five = ScheduleSpec::Cron {
+            expression: "30 9 * * *".into(),
+        };
         let next5 = next_occurrence(&five, tz("UTC"), now).unwrap();
-        assert_eq!(next5, DateTime::parse_from_rfc3339("2026-01-15T09:30:00Z").unwrap().with_timezone(&Utc));
+        assert_eq!(
+            next5,
+            DateTime::parse_from_rfc3339("2026-01-15T09:30:00Z")
+                .unwrap()
+                .with_timezone(&Utc)
+        );
     }
 
     #[test]
     fn invalid_cron_is_rejected_at_validation() {
         let config = ScheduleConfig {
             id: "c".into(),
-            spec: ScheduleSpec::Cron { expression: "not a cron".into() },
+            spec: ScheduleSpec::Cron {
+                expression: "not a cron".into(),
+            },
             timezone: "UTC".into(),
             payload: serde_json::json!({}),
             missed_policy: MissedPolicy::default(),
@@ -1272,7 +1516,9 @@ mod tests {
     fn effective_cron_reflects_spec() {
         let mut config = ScheduleConfig {
             id: "c".into(),
-            spec: ScheduleSpec::Cron { expression: "0 0 * * *".into() },
+            spec: ScheduleSpec::Cron {
+                expression: "0 0 * * *".into(),
+            },
             timezone: "UTC".into(),
             payload: serde_json::json!({}),
             missed_policy: MissedPolicy::default(),
@@ -1282,7 +1528,9 @@ mod tests {
             enabled: true,
         };
         assert_eq!(config.effective_cron().as_deref(), Some("0 0 0 * * *"));
-        config.spec = ScheduleSpec::Daily { time: "09:00".into() };
+        config.spec = ScheduleSpec::Daily {
+            time: "09:00".into(),
+        };
         assert_eq!(config.effective_cron(), None);
     }
 
@@ -1291,7 +1539,10 @@ mod tests {
     #[test]
     fn weekday_list_parsing() {
         let days = Weekday::parse_list("Mon, Wednesday,FRI").unwrap();
-        assert_eq!(days, vec![Weekday::Monday, Weekday::Wednesday, Weekday::Friday]);
+        assert_eq!(
+            days,
+            vec![Weekday::Monday, Weekday::Wednesday, Weekday::Friday]
+        );
         assert!(Weekday::parse_list("").is_err());
         assert!(Weekday::parse_list("Funday").is_err());
     }
@@ -1316,7 +1567,9 @@ mod tests {
     fn validate_all_reports_duplicate_ids() {
         let config = |id: &str| ScheduleConfig {
             id: id.into(),
-            spec: ScheduleSpec::Daily { time: "09:00".into() },
+            spec: ScheduleSpec::Daily {
+                time: "09:00".into(),
+            },
             timezone: "UTC".into(),
             payload: serde_json::json!({}),
             missed_policy: MissedPolicy::default(),

@@ -2,3 +2,4 @@
 /.freebuff
 node_modules/
 dist/
+out/

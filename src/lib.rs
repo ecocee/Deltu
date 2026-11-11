@@ -3,6 +3,7 @@
 pub mod actions;
 pub mod ai;
 pub mod cli;
+pub mod decision;
 pub mod event;
 pub mod input;
 pub mod metrics;
@@ -12,6 +13,9 @@ pub mod rules;
 pub mod runtime;
 pub mod state;
 
+pub use decision::{
+    DecisionEngine, DecisionOutcome, DecisionRequest, DecisionResponse, DecisionSchema,
+};
 pub use runtime::{ConfigError, RuntimeConfig, serve};
 
 pub use actions::{ActionConfigError, ActionError, ActionExecutor, ActionSummary, LogLevel};

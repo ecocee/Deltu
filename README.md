@@ -424,13 +424,58 @@ await client.sendEvent(
 
 ---
 
+## 🧠 System 1 Decision Engine (Sub-Millisecond AI Decisions)
+
+DELTU includes a non-autoregressive "System 1" decision engine. Unlike LLMs that take hundreds of milliseconds to generate tokens, DELTU evaluates typed decisions directly over high-dimensional feature spaces in **under 1 millisecond** (< 1ms) with zero cloud dependencies or external model downloads.
+
+### Capabilities:
+- **`Choice`**: Categorize text or pick the optimal route from candidate options with calibrated confidence.
+- **`Score`**: Continuous calibrated scoring on custom bounds (e.g., priority, urgency, relevance).
+- **`YesNo`**: Deterministic boolean guardrails and gates with calibrated probability.
+
+### CLI Usage:
+```bash
+# Route customer issues to the right team in < 1ms
+deltu decide "My credit card was charged twice" --choice "billing,tech_support,sales"
+
+# Rate urgency on continuous scale
+deltu decide "Production database is down with out-of-memory error" --score "critical server emergency"
+
+# Binary gate verification
+deltu decide "User requested password reset token" --yesno "security authentication request"
+```
+
+### Model Context Protocol (MCP) Server:
+DELTU can be used directly as an ultra-fast System 1 decision tool inside **Claude Code**, **Cursor**, **Windsurf**, or any MCP client:
+```bash
+deltu mcp
+```
+Exposes `deltu_choice`, `deltu_score`, `deltu_yesno`, and `deltu_evaluate` over standard I/O (stdio).
+
+---
+
 ## HTTP API
 
-| Route             | Purpose                     |
-| ----------------- | --------------------------- |
-| `POST /v1/events` | Ingest events               |
-| `GET /health`     | Health check                |
-| `GET /v1/status`  | Runtime status and counters |
+| Route                  | Method | Purpose                                                    | Auth Required |
+| ---------------------- | ------ | ---------------------------------------------------------- | ------------- |
+| `POST /v1/events`      | POST   | Ingest batches of continuous events                        | Yes (if configured) |
+| `POST /v1/decide`      | POST   | Evaluate full typed decision schema                        | Yes (if configured) |
+| `POST /v1/decide/choice` | POST | Quick candidate choice selection                          | Yes (if configured) |
+| `POST /v1/decide/score`  | POST | Quick continuous scoring against criteria                 | Yes (if configured) |
+| `POST /v1/decide/yesno`  | POST | Quick binary condition verification                       | Yes (if configured) |
+| `GET /metrics`         | GET    | Prometheus-formatted metrics scrape target                 | Yes (if configured) |
+| `GET /health`          | GET    | Unauthenticated health check                               | No            |
+| `GET /v1/status`       | GET    | Runtime status, queue depths, and counters                 | Yes (if configured) |
+| `GET /v1/schedules`    | GET    | List active scheduled tasks                               | Yes (if configured) |
+| `POST /v1/schedules`   | POST   | Upsert a scheduled recurring event                         | Yes (if configured) |
+
+### API Authentication:
+Configure an API key via environment variable `DELTU_API_KEY=your-secret-key` or in `engine.yaml`:
+```yaml
+auth:
+  api_key: "your-secret-key"
+```
+Requests authenticate via `Authorization: Bearer <key>` or `X-API-Key: <key>`. `/health` always remains public for orchestrators.
 
 Example error:
 

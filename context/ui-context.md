@@ -7,13 +7,14 @@ Deltu is a **developer-first CLI-based engine**. Developers interact with it thr
 The CLI should provide a simple developer experience similar to tools such as Docker Compose:
 
 ```bash
-plan-c up
-plan-c down
-plan-c start
-plan-c stop
-plan-c status
-plan-c logs
-plan-c config
+deltu up
+deltu down
+deltu run
+deltu check
+deltu status
+deltu health
+deltu logs
+deltu config
 ```
 
 No dashboard, frontend, web UI, design system, or visual interface is required for the core project.
