@@ -340,6 +340,9 @@ async fn schedule_crud_round_trip() {
         "stopped schedule has no next run"
     );
 
+    assert_eq!(status, StatusCode::OK);
+    assert!(body["data"]["next_run_ms"].is_null(), "stopped schedule has no next run");
+
     // start → running=true again
     let (status, _body) = send(a.clone(), "POST", "/v1/schedules/nightly/start", None).await;
     assert_eq!(status, StatusCode::OK);

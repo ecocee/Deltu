@@ -433,6 +433,24 @@ impl RuntimeConfig {
                     }
                     self.queue_capacity = parsed;
                 }
+                "DELTU_MERO_BRIDGE_URL" | "DELTU_MERO_BRIDGE_SECRET" => {
+                    // Re-resolve both keys against the full override set so
+                    // they may arrive in any order (the CLI hands us the
+                    // complete `DELTU_*` environment per invocation).
+                    let url = vars
+                        .iter()
+                        .rev()
+                        .find(|(k, _)| k.as_str() == "DELTU_MERO_BRIDGE_URL")
+                        .map(|(_, v)| v.clone())
+                        .or_else(|| self.mero_bridge_url());
+                    let secret = vars
+                        .iter()
+                        .rev()
+                        .find(|(k, _)| k.as_str() == "DELTU_MERO_BRIDGE_SECRET")
+                        .map(|(_, v)| v.clone())
+                        .or_else(|| self.mero_bridge_secret());
+                    self.apply_mero_bridge_overrides(url, secret);
+                }
                 _ => {}
             }
         }

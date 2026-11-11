@@ -8,8 +8,10 @@ pub mod http;
 mod http_tests;
 pub mod scheduler;
 pub mod worker;
+pub mod scheduler;
 
 pub use config::{ConfigError, HttpConfig, RuntimeConfig};
 pub use http::serve;
 pub use scheduler::{ScheduleConfig, Scheduler};
 pub use worker::{EngineCore, now_unix_ms};
+pub use scheduler::{Scheduler, ScheduleConfig};
