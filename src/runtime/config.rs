@@ -15,6 +15,8 @@ use crate::state::StateConfig;
 pub struct RuntimeConfig {
     /// HTTP listener settings.
     pub http: HttpConfig,
+    /// API authentication settings.
+    pub auth: AuthConfig,
     /// Processing pipeline settings.
     pub pipeline: PipelineConfig,
     /// State store settings.
@@ -40,6 +42,8 @@ pub struct RuntimeConfig {
 struct RawRuntimeConfig {
     #[serde(default)]
     pub http: HttpConfig,
+    #[serde(default)]
+    pub auth: AuthConfig,
     #[serde(default)]
     pub pipeline: PipelineConfig,
     #[serde(default)]
@@ -71,6 +75,7 @@ impl<'de> Deserialize<'de> for RuntimeConfig {
         }
         Ok(RuntimeConfig {
             http: raw.http,
+            auth: raw.auth,
             pipeline: raw.pipeline,
             state: raw.state,
             rules: compiled_rules,
@@ -155,14 +160,15 @@ impl SchedulerSection {
     pub fn validate(&self) -> Result<(), ConfigError> {
         if !self.enabled && (!self.schedules.is_empty() || self.snapshot_path.is_some()) {
             return Err(ConfigError::Validation(
-                "scheduler.schedules/scheduler.snapshot_path require scheduler.enabled = true".into(),
+                "scheduler.schedules/scheduler.snapshot_path require scheduler.enabled = true"
+                    .into(),
             ));
         }
         let mut seen = std::collections::HashSet::new();
         for config in &self.schedules {
-            config
-                .validate()
-                .map_err(|e| ConfigError::Validation(format!("scheduler: schedule {:?}: {e}", config.id)))?;
+            config.validate().map_err(|e| {
+                ConfigError::Validation(format!("scheduler: schedule {:?}: {e}", config.id))
+            })?;
             if !seen.insert(config.id.trim().to_string()) {
                 return Err(ConfigError::Validation(format!(
                     "scheduler: duplicate schedule id {}",
@@ -185,6 +191,7 @@ impl Default for RuntimeConfig {
     fn default() -> Self {
         Self {
             http: HttpConfig::default(),
+            auth: AuthConfig::default(),
             pipeline: PipelineConfig::default(),
             state: StateConfig::default(),
             rules: Vec::new(),
@@ -195,6 +202,15 @@ impl Default for RuntimeConfig {
             queue_capacity: default_queue_capacity(),
         }
     }
+}
+
+/// Authentication settings for the HTTP API.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct AuthConfig {
+    /// Optional API key / bearer token. If None, endpoints are unauthenticated.
+    #[serde(default)]
+    pub api_key: Option<String>,
 }
 
 /// HTTP listener settings.
@@ -383,12 +399,14 @@ impl RuntimeConfig {
         Ok(())
     }
 
-    /// Applies environment overrides: `DELTU_HTTP_BIND`, `DELTU_QUEUE_CAPACITY`.
+    /// Applies environment overrides: `DELTU_HTTP_BIND`, `DELTU_API_KEY`,
+    /// `DELTU_QUEUE_CAPACITY`, and generic action overrides `DELTU_ACTION_<ID>_*`.
     /// Unknown/invalid values are errors, never ignored.
     pub fn apply_env_overrides(&mut self, vars: &[(String, String)]) -> Result<(), ConfigError> {
         for (key, value) in vars {
             match key.as_str() {
                 "DELTU_HTTP_BIND" => self.http.bind = value.clone(),
+                "DELTU_API_KEY" => self.auth.api_key = Some(value.clone()),
                 "DELTU_SNAPSHOT_INTERVAL_SECS" => {
                     let parsed: u64 = value.parse().map_err(|_| {
                         ConfigError::Validation(format!(
@@ -415,78 +433,50 @@ impl RuntimeConfig {
                     }
                     self.queue_capacity = parsed;
                 }
-                "DELTU_MERO_BRIDGE_URL" | "DELTU_MERO_BRIDGE_SECRET" => {
-                    // Re-resolve both keys against the full override set so
-                    // they may arrive in any order (the CLI hands us the
-                    // complete `DELTU_*` environment per invocation).
-                    let url = vars
-                        .iter()
-                        .rev()
-                        .find(|(k, _)| k.as_str() == "DELTU_MERO_BRIDGE_URL")
-                        .map(|(_, v)| v.clone())
-                        .or_else(|| self.mero_bridge_url());
-                    let secret = vars
-                        .iter()
-                        .rev()
-                        .find(|(k, _)| k.as_str() == "DELTU_MERO_BRIDGE_SECRET")
-                        .map(|(_, v)| v.clone())
-                        .or_else(|| self.mero_bridge_secret());
-                    self.apply_mero_bridge_overrides(url, secret);
-                }
                 _ => {}
             }
         }
+        self.apply_action_env_overrides(vars);
         Ok(())
     }
 
-    /// The `mero-bridge` webhook action's URL, if configured.
-    fn mero_bridge_url(&self) -> Option<String> {
-        self.mero_bridge_webhook().map(|(url, _)| url)
-    }
-
-    /// The `mero-bridge` webhook action's bearer secret, if configured.
-    fn mero_bridge_secret(&self) -> Option<String> {
-        self.mero_bridge_webhook().and_then(|(_, secret)| secret)
-    }
-
-    /// Finds the `mero-bridge` webhook action (the documented Deltu → Mero
-    /// bridge; see docs/MERO_DELTU_PROTOCOL.md) and returns its URL plus
-    /// the bearer token from its `authorization` header.
-    fn mero_bridge_webhook(&self) -> Option<(String, Option<String>)> {
-        for definition in &self.actions {
-            if definition.id != "mero-bridge" {
-                continue;
-            }
-            if let crate::actions::ActionKind::Webhook { webhook } = &definition.kind {
-                let secret = webhook
-                    .headers
-                    .iter()
-                    .find(|header| header.name.eq_ignore_ascii_case("authorization"))
-                    .and_then(|header| header.value.strip_prefix("Bearer "))
-                    .map(|token| token.trim().to_string());
-                return Some((webhook.url.clone(), secret));
-            }
-        }
-        None
-    }
-
-    /// Points the `mero-bridge` webhook at `url` and sends
-    /// `authorization: Bearer <secret>`, both sourced from the
-    /// `DELTU_MERO_BRIDGE_URL` / `DELTU_MERO_BRIDGE_SECRET` environment
-    /// overrides. Secrets never live in checked-in config files: the
-    /// placeholder in a repo config stays inert until an operator (or the
-    /// compose stack) exports the real secret. An empty secret removes the
-    /// header; a missing `mero-bridge` action is a no-op.
-    fn apply_mero_bridge_overrides(&mut self, url: Option<String>, secret: Option<String>) {
+    /// Applies action environment overrides.
+    /// Supports generic `DELTU_ACTION_<ID>_URL` and `DELTU_ACTION_<ID>_SECRET` (or `TOKEN`),
+    /// as well as legacy `DELTU_MERO_BRIDGE_URL` and `DELTU_MERO_BRIDGE_SECRET`.
+    fn apply_action_env_overrides(&mut self, vars: &[(String, String)]) {
         for definition in &mut self.actions {
-            if definition.id != "mero-bridge" {
-                continue;
-            }
             if let crate::actions::ActionKind::Webhook { webhook } = &mut definition.kind {
-                if let Some(url) = &url {
-                    webhook.url = url.clone();
+                let id_upper = definition.id.to_ascii_uppercase().replace('-', "_");
+                let url_key = format!("DELTU_ACTION_{id_upper}_URL");
+                let secret_key = format!("DELTU_ACTION_{id_upper}_SECRET");
+                let token_key = format!("DELTU_ACTION_{id_upper}_TOKEN");
+
+                // Check URL override
+                let new_url = vars.iter().rev().find_map(|(k, v)| {
+                    if k == &url_key
+                        || (definition.id == "mero-bridge" && k == "DELTU_MERO_BRIDGE_URL")
+                    {
+                        Some(v.clone())
+                    } else {
+                        None
+                    }
+                });
+                if let Some(url) = new_url {
+                    webhook.url = url;
                 }
-                if let Some(secret) = &secret {
+
+                // Check Secret / Token override
+                let new_secret = vars.iter().rev().find_map(|(k, v)| {
+                    if k == &secret_key
+                        || k == &token_key
+                        || (definition.id == "mero-bridge" && k == "DELTU_MERO_BRIDGE_SECRET")
+                    {
+                        Some(v.clone())
+                    } else {
+                        None
+                    }
+                });
+                if let Some(secret) = new_secret {
                     if secret.is_empty() {
                         webhook
                             .headers
@@ -498,12 +488,10 @@ impl RuntimeConfig {
                             .find(|header| header.name.eq_ignore_ascii_case("authorization"))
                         {
                             Some(header) => header.value = format!("Bearer {secret}"),
-                            None => webhook
-                                .headers
-                                .push(crate::actions::WebhookHeader {
-                                    name: "authorization".to_string(),
-                                    value: format!("Bearer {secret}"),
-                                }),
+                            None => webhook.headers.push(crate::actions::WebhookHeader {
+                                name: "authorization".to_string(),
+                                value: format!("Bearer {secret}"),
+                            }),
                         }
                     }
                 }
@@ -641,13 +629,48 @@ mod tests {
     }
 
     #[test]
+    fn generic_action_env_overrides_patch_webhook() {
+        let mut config = RuntimeConfig {
+            actions: vec![webhook_action(
+                "alert-ops",
+                "http://127.0.0.1:9000/webhook",
+                None,
+            )],
+            ..Default::default()
+        };
+
+        config
+            .apply_env_overrides(&[
+                (
+                    "DELTU_ACTION_ALERT_OPS_URL".to_string(),
+                    "http://production:9000/alerts".to_string(),
+                ),
+                (
+                    "DELTU_ACTION_ALERT_OPS_SECRET".to_string(),
+                    "super-token".to_string(),
+                ),
+                ("DELTU_API_KEY".to_string(), "master-key".to_string()),
+            ])
+            .unwrap();
+
+        assert_eq!(config.auth.api_key.as_deref(), Some("master-key"));
+        let crate::actions::ActionKind::Webhook { webhook } = &config.actions[0].kind else {
+            panic!("expected webhook action");
+        };
+        assert_eq!(webhook.url, "http://production:9000/alerts");
+        assert_eq!(webhook.headers[0].value, "Bearer super-token");
+    }
+
+    #[test]
     fn mero_bridge_env_overrides_patch_url_and_secret() {
-        let mut config = RuntimeConfig::default();
-        config.actions = vec![webhook_action(
-            "mero-bridge",
-            "http://127.0.0.1:8000/api/deltu/webhook",
-            Some("Bearer replace-with-DELTU_WEBHOOK_SECRET"),
-        )];
+        let mut config = RuntimeConfig {
+            actions: vec![webhook_action(
+                "mero-bridge",
+                "http://127.0.0.1:8000/api/deltu/webhook",
+                Some("Bearer replace-with-DELTU_WEBHOOK_SECRET"),
+            )],
+            ..Default::default()
+        };
 
         // Both keys at once, in reverse declaration order — order must not
         // matter because the bridge is re-resolved from the full set.
@@ -670,8 +693,14 @@ mod tests {
 
     #[test]
     fn mero_bridge_env_overrides_leave_other_actions_alone() {
-        let mut config = RuntimeConfig::default();
-        config.actions = vec![webhook_action("other-hook", "http://example.test/hook", None)];
+        let mut config = RuntimeConfig {
+            actions: vec![webhook_action(
+                "other-hook",
+                "http://example.test/hook",
+                None,
+            )],
+            ..Default::default()
+        };
 
         config
             .apply_env_overrides(&[
@@ -692,12 +721,14 @@ mod tests {
 
     #[test]
     fn mero_bridge_empty_secret_removes_auth_header() {
-        let mut config = RuntimeConfig::default();
-        config.actions = vec![webhook_action(
-            "mero-bridge",
-            "http://api:8000/deltu/schedules/fired",
-            Some("Bearer stale".to_string().as_str()),
-        )];
+        let mut config = RuntimeConfig {
+            actions: vec![webhook_action(
+                "mero-bridge",
+                "http://api:8000/deltu/schedules/fired",
+                Some("Bearer stale".to_string().as_str()),
+            )],
+            ..Default::default()
+        };
 
         config
             .apply_env_overrides(&[("DELTU_MERO_BRIDGE_SECRET".to_string(), String::new())])
@@ -712,7 +743,9 @@ mod tests {
     fn schedule(id: &str) -> ScheduleConfig {
         ScheduleConfig {
             id: id.to_string(),
-            spec: ScheduleSpec::Daily { time: "09:00".into() },
+            spec: ScheduleSpec::Daily {
+                time: "09:00".into(),
+            },
             timezone: "UTC".into(),
             payload: serde_json::json!({}),
             missed_policy: Default::default(),
@@ -728,29 +761,35 @@ mod tests {
         let config = RuntimeConfig::default();
         config.validate().unwrap(); // absent section: valid
 
-        let mut enabled = RuntimeConfig::default();
-        enabled.scheduler = SchedulerSection {
-            enabled: true,
-            schedules: vec![schedule("daily-sync")],
-            snapshot_path: Some("/tmp/deltu-schedules.json".into()),
+        let enabled = RuntimeConfig {
+            scheduler: SchedulerSection {
+                enabled: true,
+                schedules: vec![schedule("daily-sync")],
+                snapshot_path: Some("/tmp/deltu-schedules.json".into()),
+            },
+            ..Default::default()
         };
         enabled.validate().unwrap();
 
         // schedules present but section disabled: rejected
-        let mut inconsistent = RuntimeConfig::default();
-        inconsistent.scheduler = SchedulerSection {
-            enabled: false,
-            schedules: vec![schedule("daily-sync")],
-            snapshot_path: None,
+        let inconsistent = RuntimeConfig {
+            scheduler: SchedulerSection {
+                enabled: false,
+                schedules: vec![schedule("daily-sync")],
+                snapshot_path: None,
+            },
+            ..Default::default()
         };
         assert!(inconsistent.validate().is_err());
 
         // duplicate ids rejected
-        let mut dup = RuntimeConfig::default();
-        dup.scheduler = SchedulerSection {
-            enabled: true,
-            schedules: vec![schedule("x"), schedule("x")],
-            snapshot_path: None,
+        let dup = RuntimeConfig {
+            scheduler: SchedulerSection {
+                enabled: true,
+                schedules: vec![schedule("x"), schedule("x")],
+                snapshot_path: None,
+            },
+            ..Default::default()
         };
         assert!(dup.validate().is_err());
     }
@@ -764,7 +803,9 @@ mod tests {
         assert_eq!(config.scheduler.schedules[0].id, "nightly");
         assert_eq!(
             config.scheduler.schedules[0].spec,
-            ScheduleSpec::Daily { time: "23:30".into() }
+            ScheduleSpec::Daily {
+                time: "23:30".into()
+            }
         );
         config.validate().unwrap();
     }

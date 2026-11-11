@@ -1,5 +1,5 @@
 # Engine config for the compose stack: ingest MQTT from the broker, run
-# the time-based scheduler, and bridge `schedule.fired` events to Mero.
+# the time-based scheduler, and forward alerts to actions.
 # Serde shapes follow the engine's documented config format (rules use YAML
 # external tags, actions use internal `type:` tags).
 #
@@ -27,15 +27,11 @@ rules:
         open
     action: demo-log
 
-  # The scheduler bridge: every real timed event (kind `schedule.fired`)
-  # is forwarded to Mero, which executes the matching workflow. This
-  # action id (`mero-bridge`) is the documented contract with the engine's
-  # DELTU_MERO_BRIDGE_URL / DELTU_MERO_BRIDGE_SECRET env overrides.
-  - id: mero-scheduler-bridge
+  - id: scheduler-bridge
     on: !Event
       kind: schedule.fired
     condition: !Exists { field: EventValue }
-    action: mero-bridge
+    action: alert-webhook
 
 actions:
   - id: demo-log
@@ -43,16 +39,12 @@ actions:
       type: log
       level: info
 
-  - id: mero-bridge
+  - id: alert-webhook
     kind:
       type: webhook
-      # Placeholder values: the compose stack patches BOTH at boot via the
-      # engine's DELTU_MERO_BRIDGE_URL / DELTU_MERO_BRIDGE_SECRET env
-      # overrides (see runtime/config.rs apply_env_overrides), pulling the
-      # secret from the .env file. A repo config must never contain a real
-      # secret, and an unset secret leaves the header inert -> Mero answers
-      # 401, which is loud rather than silently wrong.
-      url: http://api:8000/deltu/schedules/fired
+      # Placeholder values: configure via environment overrides
+      # DELTU_ACTION_ALERT_WEBHOOK_URL / DELTU_ACTION_ALERT_WEBHOOK_SECRET
+      url: http://api:8000/deltu/webhook
       method: post
       headers:
         - name: "authorization"
@@ -60,7 +52,5 @@ actions:
 
 scheduler:
   enabled: true
-  # API-created schedules are persisted here (atomic write + rename) and
-  # restored on startup, in addition to Mero's own projection/recovery.
   snapshot_path: /data/schedules.json
   schedules: []

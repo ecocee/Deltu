@@ -75,7 +75,7 @@ None added.
    already in the documented contract).
 3. **Percentiles:** nearest-rank on the retained ring samples; empty ring
    reports 0 (never NaN, never an error).
-4. **Baseline:** measured with `docs/baseline.rs` (a zero-dependency load
+4. **Baseline:** measured with `tools/baseline.rs` (a zero-dependency load
    driver kept in-repo) against a live engine — results in the tracker.
 
 ## Verify When Done

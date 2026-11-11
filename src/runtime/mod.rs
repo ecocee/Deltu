@@ -6,10 +6,10 @@ pub mod config;
 pub mod http;
 #[cfg(test)]
 mod http_tests;
-pub mod worker;
 pub mod scheduler;
+pub mod worker;
 
 pub use config::{ConfigError, HttpConfig, RuntimeConfig};
 pub use http::serve;
+pub use scheduler::{ScheduleConfig, Scheduler};
 pub use worker::{EngineCore, now_unix_ms};
-pub use scheduler::{Scheduler, ScheduleConfig};

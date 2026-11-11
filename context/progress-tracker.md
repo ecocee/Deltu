@@ -92,7 +92,7 @@ Update this file after every meaningful implementation change.
   - Verification results: `cargo test` 146 passed / 0 failed (140 prior +
     6 new: percentile math, ring bounds, window eviction, snapshot shape);
     check/build/fmt/clippy all clean.
-  - Baseline (docs/baseline.rs driver, 300 batches × 50 events, dev build,
+  - Baseline (tools/baseline.rs driver, 300 batches × 50 events, dev build,
     Apple M5, loopback, idle machine): **76,905 events/s, 0 failures,
     latency avg 0.1 ms, P95 1 ms, P99 1 ms, max 2 ms**; engine stayed
     responsive and shut down cleanly. Documented starting point for this
