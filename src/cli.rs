@@ -98,6 +98,22 @@ pub enum Command {
         #[arg(long, default_value = "yaml", value_parser = ["yaml", "json"])]
         format: String,
     },
+    /// Fast non-autoregressive decision evaluation (Choice, Score, or Yes/No).
+    Decide {
+        /// The input text / statement to evaluate.
+        input: String,
+        /// Comma-separated choice candidates (e.g. "billing,support,sales").
+        #[arg(long)]
+        choice: Option<String>,
+        /// Criteria to score against (e.g. "critical urgency").
+        #[arg(long)]
+        score: Option<String>,
+        /// Binary condition to verify (e.g. "contains password reset").
+        #[arg(long)]
+        yesno: Option<String>,
+    },
+    /// Run as a Model Context Protocol (MCP) server over standard I/O (stdio).
+    Mcp,
 }
 
 /// Exit code for a failed operation (validation/connection).
@@ -130,6 +146,18 @@ pub fn execute(command: Command) -> i32 {
             follow,
         } => logs(&file, lines, follow),
         Command::Config { config, format } => config_command(config.as_deref(), &format),
+        Command::Decide {
+            input,
+            choice,
+            score,
+            yesno,
+        } => decide(
+            &input,
+            choice.as_deref(),
+            score.as_deref(),
+            yesno.as_deref(),
+        ),
+        Command::Mcp => crate::decision::run_mcp_server(),
     }
 }
 
@@ -601,6 +629,56 @@ fn config_command(config_path: Option<&str>, format: &str) -> i32 {
     }
 }
 
+fn decide(input: &str, choice: Option<&str>, score: Option<&str>, yesno: Option<&str>) -> i32 {
+    let engine = crate::decision::DecisionEngine::new();
+    let schema = if let Some(choice_str) = choice {
+        let options: Vec<String> = choice_str
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        if options.is_empty() {
+            eprintln!("Error: --choice options must not be empty");
+            return EXIT_USAGE;
+        }
+        crate::decision::DecisionSchema::Choice {
+            options,
+            temperature: 10.0,
+        }
+    } else if let Some(criteria) = score {
+        crate::decision::DecisionSchema::Score {
+            criteria: criteria.to_string(),
+            min: 0.0,
+            max: 1.0,
+        }
+    } else if let Some(condition) = yesno {
+        crate::decision::DecisionSchema::YesNo {
+            condition: condition.to_string(),
+            threshold: 0.5,
+        }
+    } else {
+        eprintln!(
+            "Error: specify --choice <candidates>, --score <criteria>, or --yesno <condition>"
+        );
+        return EXIT_USAGE;
+    };
+
+    match engine.evaluate(crate::decision::DecisionRequest {
+        id: None,
+        input: input.to_string(),
+        schema,
+    }) {
+        Ok(res) => {
+            println!("{}", serde_json::to_string_pretty(&res).unwrap_or_default());
+            0
+        }
+        Err(e) => {
+            eprintln!("Decision evaluation error: {e}");
+            EXIT_FAILURE
+        }
+    }
+}
+
 fn load_config(path: Option<&str>) -> Result<crate::RuntimeConfig, i32> {
     let mut config = match path {
         Some(path) => match crate::RuntimeConfig::from_file(path) {
@@ -820,5 +898,14 @@ mod tests {
             Command::Status { url } => assert_eq!(url, "http://127.0.0.1:8080"),
             _ => panic!("expected status"),
         }
+
+        let cli = Cli::parse_from([
+            "deltu",
+            "decide",
+            "Customer wants refund",
+            "--choice",
+            "billing,support",
+        ]);
+        assert!(matches!(cli.command, Command::Decide { .. }));
     }
 }

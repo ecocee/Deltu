@@ -264,6 +264,8 @@ pub(crate) struct AppState {
     pub scheduler_snapshot_path: Option<String>,
     /// Optional API key / bearer token. When set, non-health routes require authentication.
     pub api_key: Option<String>,
+    /// Fast non-autoregressive decision engine.
+    pub decision_engine: Arc<crate::decision::DecisionEngine>,
 }
 
 /// Queue depth: the sender cannot observe the channel's internal length,
@@ -348,6 +350,141 @@ pub(crate) async fn get_metrics(
         )],
         body,
     )
+}
+
+/// `POST /v1/decide`: evaluates a typed decision request.
+pub(crate) async fn post_decide(
+    State(app): State<AppState>,
+    Json(req): Json<crate::decision::DecisionRequest>,
+) -> Result<(StatusCode, Json<JsonValue>), (StatusCode, Json<JsonValue>)> {
+    match app.decision_engine.evaluate(req) {
+        Ok(res) => Ok((
+            StatusCode::OK,
+            Json(serde_json::to_value(res).unwrap_or(JsonValue::Null)),
+        )),
+        Err(err) => Err((
+            StatusCode::BAD_REQUEST,
+            Json(error_body("decision_failed", err)),
+        )),
+    }
+}
+
+#[derive(serde::Deserialize)]
+pub(crate) struct ChoiceShortcutRequest {
+    pub input: String,
+    pub options: Vec<String>,
+    #[serde(default = "default_temp")]
+    pub temperature: f32,
+}
+
+fn default_temp() -> f32 {
+    10.0
+}
+
+/// `POST /v1/decide/choice`: shortcut to select one candidate from an options list.
+pub(crate) async fn post_decide_choice(
+    State(app): State<AppState>,
+    Json(req): Json<ChoiceShortcutRequest>,
+) -> Result<(StatusCode, Json<JsonValue>), (StatusCode, Json<JsonValue>)> {
+    let decision_req = crate::decision::DecisionRequest {
+        id: None,
+        input: req.input,
+        schema: crate::decision::DecisionSchema::Choice {
+            options: req.options,
+            temperature: req.temperature,
+        },
+    };
+    match app.decision_engine.evaluate(decision_req) {
+        Ok(res) => Ok((
+            StatusCode::OK,
+            Json(serde_json::to_value(res).unwrap_or(JsonValue::Null)),
+        )),
+        Err(err) => Err((
+            StatusCode::BAD_REQUEST,
+            Json(error_body("decision_failed", err)),
+        )),
+    }
+}
+
+#[derive(serde::Deserialize)]
+pub(crate) struct ScoreShortcutRequest {
+    pub input: String,
+    pub criteria: String,
+    #[serde(default = "default_min_bound")]
+    pub min: f64,
+    #[serde(default = "default_max_bound")]
+    pub max: f64,
+}
+
+fn default_min_bound() -> f64 {
+    0.0
+}
+
+fn default_max_bound() -> f64 {
+    1.0
+}
+
+/// `POST /v1/decide/score`: shortcut to score text against criteria.
+pub(crate) async fn post_decide_score(
+    State(app): State<AppState>,
+    Json(req): Json<ScoreShortcutRequest>,
+) -> Result<(StatusCode, Json<JsonValue>), (StatusCode, Json<JsonValue>)> {
+    let decision_req = crate::decision::DecisionRequest {
+        id: None,
+        input: req.input,
+        schema: crate::decision::DecisionSchema::Score {
+            criteria: req.criteria,
+            min: req.min,
+            max: req.max,
+        },
+    };
+    match app.decision_engine.evaluate(decision_req) {
+        Ok(res) => Ok((
+            StatusCode::OK,
+            Json(serde_json::to_value(res).unwrap_or(JsonValue::Null)),
+        )),
+        Err(err) => Err((
+            StatusCode::BAD_REQUEST,
+            Json(error_body("decision_failed", err)),
+        )),
+    }
+}
+
+#[derive(serde::Deserialize)]
+pub(crate) struct YesNoShortcutRequest {
+    pub input: String,
+    pub condition: String,
+    #[serde(default = "default_thresh")]
+    pub threshold: f32,
+}
+
+fn default_thresh() -> f32 {
+    0.5
+}
+
+/// `POST /v1/decide/yesno`: shortcut to verify a binary condition with calibrated probability.
+pub(crate) async fn post_decide_yesno(
+    State(app): State<AppState>,
+    Json(req): Json<YesNoShortcutRequest>,
+) -> Result<(StatusCode, Json<JsonValue>), (StatusCode, Json<JsonValue>)> {
+    let decision_req = crate::decision::DecisionRequest {
+        id: None,
+        input: req.input,
+        schema: crate::decision::DecisionSchema::YesNo {
+            condition: req.condition,
+            threshold: req.threshold,
+        },
+    };
+    match app.decision_engine.evaluate(decision_req) {
+        Ok(res) => Ok((
+            StatusCode::OK,
+            Json(serde_json::to_value(res).unwrap_or(JsonValue::Null)),
+        )),
+        Err(err) => Err((
+            StatusCode::BAD_REQUEST,
+            Json(error_body("decision_failed", err)),
+        )),
+    }
 }
 
 /// `GET /v1/schedules`: every registered schedule with status + next run.
@@ -560,6 +697,10 @@ pub(crate) fn router(app: AppState, max_body_bytes: usize) -> axum::Router {
 
     let protected = axum::Router::new()
         .route("/v1/events", post(post_events))
+        .route("/v1/decide", post(post_decide))
+        .route("/v1/decide/choice", post(post_decide_choice))
+        .route("/v1/decide/score", post(post_decide_score))
+        .route("/v1/decide/yesno", post(post_decide_yesno))
         .route("/v1/status", get(get_status))
         .route("/metrics", get(get_metrics))
         .route("/v1/schedules", get(get_schedules).post(post_schedule))
@@ -768,6 +909,7 @@ pub async fn serve(config: RuntimeConfig) -> Result<(), String> {
         scheduler: scheduler_handle.clone(),
         scheduler_snapshot_path: scheduler_cfg.snapshot_path.clone(),
         api_key: auth.api_key,
+        decision_engine: Arc::new(crate::decision::DecisionEngine::new()),
     };
     let app = router(app_state, http.max_body_bytes);
 

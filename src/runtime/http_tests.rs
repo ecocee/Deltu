@@ -49,6 +49,7 @@ fn test_state(
             scheduler: Arc::new(tokio::sync::Mutex::new(scheduler)),
             scheduler_snapshot_path: None,
             api_key: None,
+            decision_engine: Arc::new(crate::decision::DecisionEngine::new()),
         },
         rx,
     )
@@ -638,4 +639,67 @@ async fn auth_rejects_unauthorized_when_api_key_is_configured() {
     let (status, body) = send(a.clone(), "GET", "/health", None).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["status"], "ok");
+}
+
+#[tokio::test]
+async fn decide_http_endpoints_evaluate_choice_and_schemas() {
+    let (state, _rx) = test_state(10, 100);
+    let a = app(state);
+
+    // POST /v1/decide/choice shortcut
+    let shortcut_payload = serde_json::json!({
+        "input": "My monthly subscription invoice was overbilled",
+        "options": ["billing_inquiry", "bug_report", "feature_request"]
+    })
+    .to_string();
+
+    let (status, body) = send(
+        a.clone(),
+        "POST",
+        "/v1/decide/choice",
+        Some(shortcut_payload),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["outcome"]["selected"], "billing_inquiry");
+    assert!(body["outcome"]["confidence"].as_f64().unwrap() > 0.4);
+
+    // POST /v1/decide general schema
+    let decide_payload = serde_json::json!({
+        "input": "Database crashed with out of memory error",
+        "schema": {
+            "type": "score",
+            "criteria": "critical infrastructure failure",
+            "min": 0.0,
+            "max": 10.0
+        }
+    })
+    .to_string();
+
+    let (status, body) = send(a.clone(), "POST", "/v1/decide", Some(decide_payload)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body["outcome"]["score"].as_f64().unwrap() > 5.0);
+
+    // POST /v1/decide/score shortcut
+    let score_payload = serde_json::json!({
+        "input": "Urgent security vulnerability discovered in authentication",
+        "criteria": "security emergency",
+        "min": 0.0,
+        "max": 100.0
+    })
+    .to_string();
+    let (status, body) = send(a.clone(), "POST", "/v1/decide/score", Some(score_payload)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body["outcome"]["score"].as_f64().unwrap() > 50.0);
+
+    // POST /v1/decide/yesno shortcut
+    let yesno_payload = serde_json::json!({
+        "input": "I need help resetting my account password immediately",
+        "condition": "password reset account support"
+    })
+    .to_string();
+    let (status, body) = send(a, "POST", "/v1/decide/yesno", Some(yesno_payload)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["outcome"]["result"], true);
+    assert!(body["outcome"]["probability"].as_f64().unwrap() > 0.5);
 }
